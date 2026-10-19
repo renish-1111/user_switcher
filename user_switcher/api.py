@@ -8,7 +8,7 @@ from frappe import _
 from frappe.sessions import delete_session, get_expiry_in_seconds
 from frappe.utils import cint, validate_email_address
 
-ALLOWED_ROLES = {"System Manager"}
+ALLOWED_ROLES = set()  # Administrator only (_can_switch allows Administrator explicitly)
 AUTOMATIC_ROLES = ["All", "Guest", "Administrator", "Desk User"]
 # Desk route views whose second part is a doctype (frappe.get_route())
 DOCTYPE_VIEWS = ("List", "Form", "Report", "Tree", "Image", "Kanban", "Calendar", "Gantt", "Dashboard", "Map")
