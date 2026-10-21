@@ -50,8 +50,8 @@ def _real_user() -> str:
 
 
 def _is_enabled() -> bool:
-	# ? NEEDS BOTH SETTINGS: developer_mode ALONE IS OFTEN ON BY HABIT (OR BY MISTAKE ON A LIVE SITE)
-	return bool(frappe.conf.developer_mode and frappe.conf.get("user_switcher_enabled"))
+	# Opt-in only via site config. developer_mode is not required.
+	return bool(frappe.conf.get("user_switcher_enabled"))
 
 
 def _escape_like(txt: str) -> str:
