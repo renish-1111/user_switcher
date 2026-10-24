@@ -1,0 +1,15 @@
+{
+  "name": "user_switcher",
+  "version": "1.0.0",
+  "description": "Floating quick user-switcher for Frappe and ERPNext",
+  "private": true,
+  "scripts": {
+    "test:e2e": "cypress run",
+    "test:e2e:headed": "cypress run --headed",
+    "cypress:open": "cypress open",
+    "cypress:run": "cypress run"
+  },
+  "devDependencies": {
+    "cypress": "^13.17.0"
+  }
+}

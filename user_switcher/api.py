@@ -5,7 +5,7 @@ import re
 import frappe
 from frappe import _
 from frappe.sessions import delete_session
-from frappe.utils import validate_email_address
+from frappe.utils import cint, validate_email_address
 
 ALLOWED_ROLES = {"System Manager"}
 AUTOMATIC_ROLES = ["All", "Guest", "Administrator", "Desk User"]
@@ -13,7 +13,14 @@ AUTOMATIC_ROLES = ["All", "Guest", "Administrator", "Desk User"]
 
 def _real_user() -> str:
 	"""The user who actually logged in, even while switched into someone else."""
-	return frappe.session.data.get("impersonated_by") or frappe.session.user
+	data = getattr(frappe.session, "data", None)
+	if data is None and hasattr(frappe.session, "get"):
+		data = frappe.session.get("data")
+	impersonator = (data or {}).get("impersonated_by") if isinstance(data, dict) else None
+	session_user = getattr(frappe.session, "user", None)
+	if not session_user and hasattr(frappe.session, "get"):
+		session_user = frappe.session.get("user")
+	return impersonator or session_user or "Guest"
 
 
 def _is_enabled() -> bool:
@@ -23,6 +30,8 @@ def _is_enabled() -> bool:
 
 def _escape_like(txt: str) -> str:
 	"""Escape `\\`, `%` and `_` so user text matches literally inside a LIKE filter."""
+	if not isinstance(txt, str):
+		txt = str(txt or "")
 	return txt.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
 
 
@@ -32,10 +41,10 @@ def _match_rank(text: str, query: str) -> int:
 	Typed words may match the starts of words in any order ("inv sal" -> Sales Invoice), the
 	letters may spell the initials ("si" -> Sales Invoice), and a plain substring still matches.
 	"""
-	q = (query or "").strip().casefold()
+	q = str(query or "").strip().casefold()
 	if not q:
 		return 1
-	t = (text or "").casefold()
+	t = str(text or "").casefold()
 	words = [w for w in re.split(r"[\s._\-/]+", t) if w]
 	parts = q.split()
 	if t == q:
@@ -57,13 +66,15 @@ def _blocked_targets(real_user: str) -> list[str]:
 	Administrator is blocked for everyone else. Other System Managers are blocked unless
 	`real_user` created them and they have no password yet (i.e. they are still test users).
 	"""
+	canonical_real = frappe.db.get_value("User", (real_user or "").strip(), "name") or real_user
+	real_user = canonical_real
 	if real_user == "Administrator":
 		return []
 
 	managers = frappe.get_all(
 		"Has Role", filters={"parenttype": "User", "role": "System Manager"}, pluck="parent", ignore_permissions=True
 	)
-	managers = [m for m in managers if m != real_user]
+	managers = [m for m in managers if m.casefold() != real_user.casefold()]
 	if not managers:
 		return ["Administrator"]
 
@@ -80,14 +91,17 @@ def _blocked_targets(real_user: str) -> list[str]:
 
 
 def _can_switch(real_user: str | None = None) -> bool:
+	if not _is_enabled():
+		return False
 	real_user = real_user or _real_user()
-	if real_user == "Guest" or not _is_enabled():
+	if not real_user or real_user == "Guest":
 		return False
-	if not frappe.get_cached_value("User", real_user, "enabled"):
+	user_info = frappe.db.get_value("User", (real_user or "").strip(), ["name", "enabled"], as_dict=True)
+	if not user_info or not user_info.enabled or user_info.name == "Guest":
 		return False
-	if real_user == "Administrator":
+	if user_info.name == "Administrator":
 		return True
-	return bool(ALLOWED_ROLES & set(frappe.get_roles(real_user)))
+	return bool(ALLOWED_ROLES & set(frappe.get_roles(user_info.name)))
 
 
 def _deny(message: str, action: str, target: str | None = None) -> None:
@@ -121,7 +135,10 @@ def end_orphaned_session() -> None:
 	Raises:
 		frappe.SessionExpired: The session was ended; the browser goes back to the login page.
 	"""
-	impersonator = (getattr(frappe.session, "data", None) or {}).get("impersonated_by")
+	data = getattr(frappe.session, "data", None)
+	if data is None and hasattr(frappe.session, "get"):
+		data = frappe.session.get("data")
+	impersonator = (data or {}).get("impersonated_by") if isinstance(data, dict) else None
 	if not impersonator or _can_switch(impersonator):
 		return
 	frappe.logger("user_switcher").warning(
@@ -135,7 +152,7 @@ def end_orphaned_session() -> None:
 
 @frappe.whitelist()
 def get_context(
-	txt: str | None = None, user_type: str | None = None, limit: int = 30, cached: list | str | None = None
+	txt: str | None = None, user_type: str | None = None, limit: int | str = 30, cached: list | str | None = None
 ):
 	"""Return switcher state and a filtered user list.
 
@@ -153,7 +170,11 @@ def get_context(
 	if not _can_switch(real_user):
 		return {"allowed": False}
 
-	limit = max(0, min(int(limit), 100))
+	try:
+		limit = int(limit)
+	except (ValueError, TypeError):
+		limit = 30
+	limit = max(0, min(limit, 100))
 	if not limit:
 		return {"allowed": True}
 
@@ -170,24 +191,41 @@ def get_context(
 
 
 def _stale_users(cached: list | str | None) -> list[str]:
-	names = frappe.parse_json(cached) if isinstance(cached, str) else (cached or [])
-	names = [n for n in names if isinstance(n, str)][:200]
+	if isinstance(cached, str):
+		try:
+			cached = frappe.parse_json(cached)
+		except Exception:
+			cached = []
+	if not isinstance(cached, (list, tuple, set)):
+		return []
+	names = [n.strip() for n in cached if isinstance(n, str) and n.strip()][:200]
 	if not names:
 		return []
 	alive = set(frappe.get_all("User", filters={"name": ["in", names], "enabled": 1}, pluck="name", ignore_permissions=True))
-	return [n for n in names if n not in alive]
+	seen = set()
+	stale = []
+	for n in names:
+		if n not in alive and n not in seen:
+			seen.add(n)
+			stale.append(n)
+	return stale
 
 
 def _find_users(real_user: str, txt: str | None, user_type: str | None, limit: int) -> list[dict]:
-	filters = {"enabled": 1, "name": ["not in", ["Guest", frappe.session.user]]}
-	filters["name"][1].extend(_blocked_targets(real_user))
+	exclude_users = {"Guest"}
+	if getattr(frappe.session, "user", None):
+		exclude_users.add(frappe.session.user)
+	exclude_users.update(_blocked_targets(real_user))
+
+	filters = {"enabled": 1, "name": ["not in", list(exclude_users)]}
 
 	if user_type in ("System User", "Website User"):
 		filters["user_type"] = user_type
 
 	or_filters = None
-	if txt:
-		like = f"%{_escape_like(txt)}%"
+	clean_txt = str(txt or "").strip()
+	if clean_txt:
+		like = f"%{_escape_like(clean_txt)}%"
 		or_filters = {"name": ["like", like], "full_name": ["like", like]}
 
 	users = frappe.get_all(
@@ -204,7 +242,7 @@ def _find_users(real_user: str, txt: str | None, user_type: str | None, limit: i
 
 
 def _user_info(user: str) -> dict:
-	info = frappe.db.get_value("User", user, ["name", "full_name", "user_image", "user_type"], as_dict=True)
+	info = frappe.db.get_value("User", (user or "").strip(), ["name", "full_name", "user_image", "user_type"], as_dict=True)
 	return info or {"name": user}
 
 
@@ -243,7 +281,7 @@ def log_switch(real_user: str, target_user: str) -> None:
 			"real_user": real_user,
 			"target_user": target_user,
 			"action": "Switch" if target_user != real_user else "Switch Back",
-			"ip_address": frappe.local.request_ip,
+			"ip_address": getattr(frappe.local, "request_ip", None),
 		}
 	)
 	doc.flags.from_switcher = True
@@ -269,10 +307,16 @@ def switch_to_user(target_user: str):
 	if not _can_switch(real_user):
 		_deny(_("Not permitted to switch users"), "switch", target_user)
 
-	if target_user == "Guest" or not frappe.db.get_value("User", target_user, "enabled"):
-		frappe.throw(_("Cannot switch to this user"))
+	canonical_real = frappe.db.get_value("User", (real_user or "").strip(), "name") or real_user
+	real_user = canonical_real
 
-	if target_user != real_user and target_user in _blocked_targets(real_user):
+	canonical_target = frappe.db.get_value("User", str(target_user or "").strip(), "name")
+	if not canonical_target or canonical_target == "Guest" or not frappe.db.get_value("User", canonical_target, "enabled"):
+		frappe.throw(_("Cannot switch to this user"))
+	target_user = canonical_target
+
+	blocked = {b.casefold() for b in _blocked_targets(real_user)}
+	if target_user.casefold() != real_user.casefold() and target_user.casefold() in blocked:
 		_deny(_("You are not permitted to switch into this user"), "switch", target_user)
 
 	if target_user == frappe.session.user:
@@ -282,16 +326,19 @@ def switch_to_user(target_user: str):
 	log_switch(real_user, target_user)
 
 	old_sid = frappe.session.sid
-	session_data = frappe.local.session_obj.data.data
+	session_obj = getattr(frappe.local, "session_obj", None)
+	session_data = getattr(getattr(session_obj, "data", None), "data", None)
+	session_end = getattr(session_data, "session_end", None) if session_data else None
+	audit_user = getattr(session_data, "audit_user", None) if session_data else None
 	login_manager = frappe.local.login_manager
 
 	# login_as() creates a brand new session and sets the sid cookie, so the switch
 	# survives the reload (frappe.set_user() only affects the current request).
 	login_manager.login_as(
-		target_user, session_end=session_data.session_end, audit_user=session_data.audit_user
+		target_user, session_end=session_end, audit_user=audit_user
 	)
 
-	if target_user != real_user:
+	if target_user != real_user and hasattr(frappe.local.session_obj, "set_impersonated"):
 		# Keeps the "impersonating" banner in desk, tags Version logs, and lets us switch back.
 		frappe.local.session_obj.set_impersonated(real_user)
 
@@ -329,9 +376,12 @@ def get_role_profiles() -> list[dict]:
 	"""
 	if not _can_switch():
 		_deny(_("Not permitted"), "list_role_profiles")
+	active_roles = set(frappe.get_all("Role", filters={"disabled": 0}, pluck="name", ignore_permissions=True)) - set(
+		AUTOMATIC_ROLES
+	)
 	rows = frappe.get_all(
 		"Has Role",
-		filters={"parenttype": "Role Profile", "role": ["not in", AUTOMATIC_ROLES]},
+		filters={"parenttype": "Role Profile", "role": ["in", list(active_roles) or [""]]},
 		fields=["parent", "role"],
 		order_by="parent asc, idx asc",
 		ignore_permissions=True,
@@ -343,7 +393,7 @@ def get_role_profiles() -> list[dict]:
 
 
 @frappe.whitelist(methods=["POST"])
-def create_test_user(full_name: str, email: str, roles: list | str | None = None, switch: int = 1):
+def create_test_user(full_name: str, email: str, roles: list | str | None = None, switch: int | str | bool = 1):
 	"""Create an enabled test user with the given roles, optionally switching into it.
 
 	Args:
@@ -363,17 +413,32 @@ def create_test_user(full_name: str, email: str, roles: list | str | None = None
 	if not _can_switch(real_user):
 		_deny(_("Not permitted to create test users"), "create_test_user", email)
 
-	full_name = (full_name or "").strip()
-	email = (email or "").strip().lower()
+	canonical_real = frappe.db.get_value("User", (real_user or "").strip(), "name") or real_user
+	real_user = canonical_real
+
+	full_name = str(full_name or "").strip()
+	email = str(email or "").strip().lower()
 	if not full_name:
 		frappe.throw(_("Name is required"))
+	if not email:
+		frappe.throw(_("Email is required"))
 	validate_email_address(email, throw=True)
 	if frappe.db.exists("User", email):
 		frappe.throw(_("User {0} already exists").format(email), frappe.DuplicateEntryError)
 
-	roles = frappe.parse_json(roles) if isinstance(roles, str) else (roles or [])
+	if isinstance(roles, str):
+		try:
+			roles = frappe.parse_json(roles)
+		except Exception:
+			roles = [roles]
+	if isinstance(roles, str):
+		roles = [roles]
+	elif not isinstance(roles, (list, tuple, set)):
+		roles = []
+
+	cleaned_roles = [str(r).strip() for r in roles if r and isinstance(r, str) and str(r).strip()]
 	valid_roles = set(
-		frappe.get_all("Role", filters={"name": ["in", roles or [""]], "disabled": 0}, pluck="name")
+		frappe.get_all("Role", filters={"name": ["in", cleaned_roles or [""]], "disabled": 0}, pluck="name")
 	) - set(AUTOMATIC_ROLES)
 
 	first_name, _sep, last_name = full_name.partition(" ")
@@ -396,7 +461,7 @@ def create_test_user(full_name: str, email: str, roles: list | str | None = None
 	# ? WHILE SWITCHED, THE INSERT OWNER IS THE IMPERSONATED USER; _blocked_targets NEEDS THE REAL ONE
 	frappe.db.set_value("User", user.name, "owner", real_user, update_modified=False)
 
-	if int(switch):
+	if cint(switch):
 		switch_to_user(user.name)
 
 	return {"name": user.name, "full_name": user.full_name, "user_type": user.user_type, "roles": sorted(valid_roles)}
@@ -407,9 +472,17 @@ def _check_role_target(user: str) -> str:
 	real_user = _real_user()
 	if not _can_switch(real_user):
 		_deny(_("Not permitted to manage roles"), "manage_roles", user)
-	if user in ("Administrator", "Guest") or not frappe.db.exists("User", user):
+	canonical_real = frappe.db.get_value("User", (real_user or "").strip(), "name") or real_user
+	real_user = canonical_real
+
+	canonical_user = frappe.db.get_value("User", str(user or "").strip(), "name")
+	if not canonical_user or canonical_user in ("Administrator", "Guest"):
 		frappe.throw(_("Cannot manage roles of this user"))
-	if user not in (real_user, frappe.session.user) and user in _blocked_targets(real_user):
+	user = canonical_user
+
+	blocked = {b.casefold() for b in _blocked_targets(real_user)}
+	session_user = (frappe.session.user or "").casefold()
+	if user.casefold() not in (real_user.casefold(), session_user) and user.casefold() in blocked:
 		_deny(_("You are not permitted to manage roles of this user"), "manage_roles", user)
 	return real_user
 
@@ -418,9 +491,10 @@ def _check_role_target(user: str) -> str:
 def get_user_roles(user: str) -> list[str]:
 	"""Roles currently assigned to `user`, minus the automatic ones."""
 	_check_role_target(user)
+	canonical_user = frappe.db.get_value("User", str(user or "").strip(), "name") or user
 	return frappe.get_all(
 		"Has Role",
-		filters={"parenttype": "User", "parent": user, "role": ["not in", AUTOMATIC_ROLES]},
+		filters={"parenttype": "User", "parent": canonical_user, "role": ["not in", AUTOMATIC_ROLES]},
 		pluck="role",
 		order_by="role asc",
 		ignore_permissions=True,
@@ -443,14 +517,25 @@ def set_user_roles(user: str, roles: list | str | None = None):
 		frappe.ValidationError: Target is Administrator/Guest/missing, or the caller would drop their own System Manager.
 	"""
 	real_user = _check_role_target(user)
+	canonical_user = frappe.db.get_value("User", str(user or "").strip(), "name") or user
 
-	roles = frappe.parse_json(roles) if isinstance(roles, str) else (roles or [])
+	if isinstance(roles, str):
+		try:
+			roles = frappe.parse_json(roles)
+		except Exception:
+			roles = [roles]
+	if isinstance(roles, str):
+		roles = [roles]
+	elif not isinstance(roles, (list, tuple, set)):
+		roles = []
+
+	cleaned_roles = [str(r).strip() for r in roles if r and isinstance(r, str) and str(r).strip()]
 	assignable = set(frappe.get_all("Role", filters={"disabled": 0}, pluck="name")) - set(AUTOMATIC_ROLES)
-	wanted = set(roles) & assignable
+	wanted = set(cleaned_roles) & assignable
 
-	doc = frappe.get_doc("User", user)
+	doc = frappe.get_doc("User", canonical_user)
 	current = {d.role for d in doc.roles} & assignable
-	if user == real_user and "System Manager" in current - wanted:
+	if canonical_user.casefold() == real_user.casefold() and "System Manager" in current - wanted:
 		frappe.throw(_("You cannot remove System Manager from your own account here"))
 
 	doc.append_roles(*sorted(wanted - current))
@@ -480,6 +565,7 @@ def _check_access_doctype(doctype: str):
 	"""Raise unless the caller may change `doctype`'s role permissions; returns its meta."""
 	if not _can_switch():
 		_deny(_("Not permitted to manage doctype access"), "manage_access", doctype)
+	doctype = str(doctype or "").strip()
 	if not doctype or not frappe.db.exists("DocType", doctype):
 		frappe.throw(_("DocType {0} not found").format(doctype or ""))
 	meta = frappe.get_meta(doctype)
@@ -542,6 +628,7 @@ def get_doctype_access(doctype: str) -> dict:
 		`only_if_creator` (roles whose rule applies only to their own documents), `customized`
 		and `assignable_roles` (roles that can be given access).
 	"""
+	doctype = str(doctype or "").strip()
 	meta = _check_access_doctype(doctype)
 	rights = _access_rights(meta)
 	user = frappe.session.user
@@ -553,7 +640,11 @@ def get_doctype_access(doctype: str) -> dict:
 		if rule.if_owner:
 			only_if_creator.add(rule.role)
 			continue
-		rows[rule.role] = {r: frappe.utils.cint(rule.get(r)) for r in rights}
+		if rule.role not in rows:
+			rows[rule.role] = {r: cint(rule.get(r)) for r in rights}
+		else:
+			for r in rights:
+				rows[rule.role][r] = max(rows[rule.role][r], cint(rule.get(r)))
 
 	roles = [
 		{
@@ -586,7 +677,7 @@ def get_doctype_access(doctype: str) -> dict:
 
 
 @frappe.whitelist(methods=["POST"])
-def set_doctype_access(doctype: str, changes: dict | str):
+def set_doctype_access(doctype: str, changes: dict | str | None = None):
 	"""Apply level-0 permission changes to `doctype`, the way Role Permission Manager saves them.
 
 	Args:
@@ -604,21 +695,38 @@ def set_doctype_access(doctype: str, changes: dict | str):
 	from frappe.core.doctype.doctype.doctype import validate_permissions_for_doctype
 	from frappe.permissions import setup_custom_perms
 
+	doctype = str(doctype or "").strip()
 	meta = _check_access_doctype(doctype)
 	rights = set(_access_rights(meta))
-	changes = frappe.parse_json(changes) if isinstance(changes, str) else (changes or {})
+	if not changes:
+		changes = {}
+	if isinstance(changes, str):
+		try:
+			changes = frappe.parse_json(changes)
+		except Exception:
+			frappe.throw(_("Invalid changes payload"))
+	if not isinstance(changes, dict):
+		frappe.throw(_("Invalid changes payload"))
+
 	assignable = set(frappe.get_all("Role", filters={"disabled": 0}, pluck="name", ignore_permissions=True)) - set(
 		AUTOMATIC_ROLES
 	)
 
-	setup_custom_perms(doctype)
+	sanitized_changes = {}
 	for role, values in changes.items():
 		if role not in assignable:
 			frappe.throw(_("Role {0} can't be given access here").format(role))
-		values = {r: frappe.utils.cint(v) for r, v in (values or {}).items() if r in rights}
-		if not values:
+		if not isinstance(values, dict):
 			continue
+		vals = {r: cint(v) for r, v in values.items() if r in rights}
+		if vals:
+			sanitized_changes[role] = vals
 
+	if not sanitized_changes:
+		return get_doctype_access(doctype)
+
+	setup_custom_perms(doctype)
+	for role, values in sanitized_changes.items():
 		name = frappe.db.get_value("Custom DocPerm", {"parent": doctype, "role": role, "permlevel": 0, "if_owner": 0})
 		if name:
 			rule = frappe.get_doc("Custom DocPerm", name)
@@ -633,6 +741,16 @@ def set_doctype_access(doctype: str, changes: dict | str):
 			if not rule.is_new():
 				frappe.delete_doc("Custom DocPerm", rule.name, ignore_permissions=True, force=True)
 			continue
+
+		if rule.cancel and not rule.submit:
+			frappe.throw(_("Cannot set Cancel without Submit for role {0}").format(role))
+		if (rule.submit or rule.cancel or rule.amend) and not rule.write:
+			frappe.throw(_("Cannot set Submit, Cancel, Amend without Write for role {0}").format(role))
+		if rule.amend and not rule.cancel:
+			frappe.throw(_("Cannot set Amend without Cancel for role {0}").format(role))
+		if rule.get("import") and not rule.create:
+			frappe.throw(_("Cannot set Import without Create for role {0}").format(role))
+
 		rule.save(ignore_permissions=True)
 
 		frappe.logger("user_switcher").info(
@@ -642,6 +760,9 @@ def set_doctype_access(doctype: str, changes: dict | str):
 	if not frappe.db.exists("Custom DocPerm", {"parent": doctype}):
 		# With no custom rules left Frappe would silently fall back to the standard ones
 		frappe.throw(_("{0} must keep at least one permission rule").format(doctype))
+
+	if not frappe.db.exists("Custom DocPerm", {"parent": doctype, "permlevel": 0, "read": 1}):
+		frappe.throw(_("At least one permission rule must have Read permission for {0}").format(doctype))
 
 	validate_permissions_for_doctype(doctype)
 	return get_doctype_access(doctype)

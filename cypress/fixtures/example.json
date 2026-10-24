@@ -1,0 +1,7 @@
+{
+  "test_user": {
+    "name": "Cypress Test User",
+    "email": "cypress_test_user@example.com",
+    "roles": ["Desk User"]
+  }
+}

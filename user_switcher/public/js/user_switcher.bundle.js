@@ -272,7 +272,8 @@
 				} catch (e) {}
 				if (to) window.location.href = to;
 				// The current desk route may not be accessible to the new user, so restart from /app
-				else if (window.location.pathname.startsWith("/app")) window.location.href = "/app";
+				else if (window.location.pathname === "/app") window.location.reload();
+				else if (window.location.pathname.startsWith("/app") || window.location.pathname.startsWith("/desk")) window.location.href = "/app";
 				else window.location.reload();
 			})
 			.catch(() => {
