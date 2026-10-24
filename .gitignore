@@ -6,3 +6,5 @@ tags
 node_modules
 __pycache__
 user_switcher/public/dist
+cypress/screenshots
+cypress/videos
