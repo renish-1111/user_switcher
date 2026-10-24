@@ -16,41 +16,51 @@ class TestSecurityAndPrivilegeEscalation(IntegrationTestCase):
 		frappe.set_user("Administrator")
 		# Ensure test manager exists with password
 		if not frappe.db.exists("User", "us_victim_sm@example.com"):
-			frappe.get_doc({
-				"doctype": "User",
-				"email": "us_victim_sm@example.com",
-				"first_name": "Victim",
-				"send_welcome_email": 0,
-				"roles": [{"role": "System Manager"}]
-			}).insert()
+			frappe.get_doc(
+				{
+					"doctype": "User",
+					"email": "us_victim_sm@example.com",
+					"first_name": "Victim",
+					"send_welcome_email": 0,
+					"roles": [{"role": "System Manager"}],
+				}
+			).insert()
 		frappe.utils.password.update_password("us_victim_sm@example.com", "SecretPass123!")
 
 		# Ensure attacker manager exists
 		if not frappe.db.exists("User", "us_attacker_sm@example.com"):
-			frappe.get_doc({
-				"doctype": "User",
-				"email": "us_attacker_sm@example.com",
-				"first_name": "Attacker",
-				"send_welcome_email": 0,
-				"roles": [{"role": "System Manager"}]
-			}).insert()
+			frappe.get_doc(
+				{
+					"doctype": "User",
+					"email": "us_attacker_sm@example.com",
+					"first_name": "Attacker",
+					"send_welcome_email": 0,
+					"roles": [{"role": "System Manager"}],
+				}
+			).insert()
 		frappe.utils.password.update_password("us_attacker_sm@example.com", "AttackerPass123!")
 
 		# Ensure standard non-admin user exists
 		if not frappe.db.exists("User", "us_standard_user@example.com"):
-			frappe.get_doc({
-				"doctype": "User",
-				"email": "us_standard_user@example.com",
-				"first_name": "Standard",
-				"send_welcome_email": 0,
-				"roles": [{"role": "Desk User"}]
-			}).insert()
+			frappe.get_doc(
+				{
+					"doctype": "User",
+					"email": "us_standard_user@example.com",
+					"first_name": "Standard",
+					"send_welcome_email": 0,
+					"roles": [{"role": "Desk User"}],
+				}
+			).insert()
 		frappe.utils.password.update_password("us_standard_user@example.com", "StandardPass123!")
 
 	@classmethod
 	def tearDownClass(cls):
 		frappe.set_user("Administrator")
-		for email in ("us_victim_sm@example.com", "us_attacker_sm@example.com", "us_standard_user@example.com"):
+		for email in (
+			"us_victim_sm@example.com",
+			"us_attacker_sm@example.com",
+			"us_standard_user@example.com",
+		):
 			if frappe.db.exists("User", email):
 				frappe.delete_doc("User", email, force=True)
 		super().tearDownClass()
@@ -58,7 +68,9 @@ class TestSecurityAndPrivilegeEscalation(IntegrationTestCase):
 	def setUp(self):
 		super().setUp()
 		frappe.set_user("Administrator")
-		self.conf = patch.object(frappe.local, "conf", frappe._dict(frappe.local.conf, developer_mode=1, user_switcher_enabled=1))
+		self.conf = patch.object(
+			frappe.local, "conf", frappe._dict(frappe.local.conf, developer_mode=1, user_switcher_enabled=1)
+		)
 		self.conf.start()
 		self.addCleanup(self.conf.stop)
 		self.addCleanup(frappe.set_user, "Administrator")
@@ -88,37 +100,50 @@ class TestSecurityAndPrivilegeEscalation(IntegrationTestCase):
 	def test_case_bypass_administrator_switch(self):
 		"""System Manager trying to switch to 'administrator' via casing or whitespace tricks must be blocked."""
 		frappe.set_user("us_attacker_sm@example.com")
-		with patch.object(frappe.local, "login_manager", MagicMock(), create=True), \
-			 patch.object(frappe.local, "session_obj", MagicMock(), create=True):
+		with (
+			patch.object(frappe.local, "login_manager", MagicMock(), create=True),
+			patch.object(frappe.local, "session_obj", MagicMock(), create=True),
+		):
 			for payload in ["administrator", "ADMINISTRATOR", "Administrator ", " administrator"]:
-				with self.assertRaises(frappe.PermissionError, msg=f"Payload {payload} bypassed blocked target check!"):
+				with self.assertRaises(
+					frappe.PermissionError, msg=f"Payload {payload} bypassed blocked target check!"
+				):
 					api.switch_to_user(payload)
 
 	def test_case_bypass_other_system_manager_switch(self):
 		"""System Manager trying to switch to another System Manager via case variation must be blocked."""
 		frappe.set_user("us_attacker_sm@example.com")
-		with patch.object(frappe.local, "login_manager", MagicMock(), create=True), \
-			 patch.object(frappe.local, "session_obj", MagicMock(), create=True):
+		with (
+			patch.object(frappe.local, "login_manager", MagicMock(), create=True),
+			patch.object(frappe.local, "session_obj", MagicMock(), create=True),
+		):
 			for payload in [
 				"US_VICTIM_SM@EXAMPLE.COM",
 				"us_victim_sm@example.com ",
 				" us_victim_sm@example.com",
 			]:
-				with self.assertRaises(frappe.PermissionError, msg=f"Payload {payload} bypassed victim SM block!"):
+				with self.assertRaises(
+					frappe.PermissionError, msg=f"Payload {payload} bypassed victim SM block!"
+				):
 					api.switch_to_user(payload)
 
 	def test_case_bypass_administrator_set_user_roles(self):
 		"""System Manager trying to manage roles of Administrator via case/whitespace trick must be rejected."""
 		frappe.set_user("us_attacker_sm@example.com")
 		for payload in ["administrator", "ADMINISTRATOR", "Administrator ", " administrator"]:
-			with self.assertRaises((frappe.ValidationError, frappe.PermissionError), msg=f"Managed Administrator roles via {payload}!"):
+			with self.assertRaises(
+				(frappe.ValidationError, frappe.PermissionError),
+				msg=f"Managed Administrator roles via {payload}!",
+			):
 				api.set_user_roles(payload, ["Desk User"])
 
 	def test_case_bypass_victim_manager_set_user_roles(self):
 		"""System Manager trying to manage roles of another Manager via case trick must be blocked."""
 		frappe.set_user("us_attacker_sm@example.com")
 		for payload in ["US_VICTIM_SM@EXAMPLE.COM", "us_victim_sm@example.com ", " us_victim_sm@example.com"]:
-			with self.assertRaises(frappe.PermissionError, msg=f"Managed victim manager roles via {payload}!"):
+			with self.assertRaises(
+				frappe.PermissionError, msg=f"Managed victim manager roles via {payload}!"
+			):
 				api.set_user_roles(payload, ["Desk User"])
 
 
@@ -128,7 +153,9 @@ class TestCrashAndFuzzing(IntegrationTestCase):
 	def setUp(self):
 		super().setUp()
 		frappe.set_user("Administrator")
-		self.conf = patch.object(frappe.local, "conf", frappe._dict(frappe.local.conf, developer_mode=1, user_switcher_enabled=1))
+		self.conf = patch.object(
+			frappe.local, "conf", frappe._dict(frappe.local.conf, developer_mode=1, user_switcher_enabled=1)
+		)
 		self.conf.start()
 		self.addCleanup(self.conf.stop)
 		self.addCleanup(frappe.set_user, "Administrator")
@@ -173,9 +200,9 @@ class TestCrashAndFuzzing(IntegrationTestCase):
 		"""set_user_roles should gracefully handle various formats and reject bad types."""
 		user = "us_standard_user@example.com"
 		if not frappe.db.exists("User", user):
-			frappe.get_doc({
-				"doctype": "User", "email": user, "first_name": "Standard", "send_welcome_email": 0
-			}).insert()
+			frappe.get_doc(
+				{"doctype": "User", "email": user, "first_name": "Standard", "send_welcome_email": 0}
+			).insert()
 
 		# Single string role (non-JSON)
 		res = api.set_user_roles(user, roles="Website Manager")
@@ -217,10 +244,68 @@ class TestDoctypeAccessEdgeCases(IntegrationTestCase):
 	def setUp(self):
 		super().setUp()
 		frappe.set_user("Administrator")
-		self.conf = patch.object(frappe.local, "conf", frappe._dict(frappe.local.conf, developer_mode=1, user_switcher_enabled=1))
+		self.conf = patch.object(
+			frappe.local, "conf", frappe._dict(frappe.local.conf, developer_mode=1, user_switcher_enabled=1)
+		)
 		self.conf.start()
 		self.addCleanup(self.conf.stop)
 		self.addCleanup(frappe.set_user, "Administrator")
+
+	def _get_submittable_doctype_and_role(self):
+		if frappe.db.exists("DocType", "Purchase Receipt") and frappe.db.exists("Role", "Stock Manager"):
+			return "Purchase Receipt", "Stock Manager"
+		for dt in frappe.get_all(
+			"DocType",
+			filters={"is_submittable": 1, "istable": 0, "name": ["not in", api.BLOCKED_DOCTYPES]},
+			pluck="name",
+		):
+			role = frappe.db.get_value("DocPerm", {"parent": dt, "permlevel": 0}, "role")
+			if role and role not in api.AUTOMATIC_ROLES:
+				return dt, role
+		test_dt = "US Test Submittable"
+		if not frappe.db.exists("DocType", test_dt):
+			frappe.get_doc(
+				{
+					"doctype": "DocType",
+					"name": test_dt,
+					"module": "Core",
+					"custom": 1,
+					"is_submittable": 1,
+					"permissions": [
+						{
+							"role": "System Manager",
+							"read": 1,
+							"write": 1,
+							"create": 1,
+							"submit": 1,
+							"cancel": 1,
+						}
+					],
+				}
+			).insert(ignore_permissions=True)
+		return test_dt, "System Manager"
+
+	def _get_doctype_without_automatic_roles(self):
+		if frappe.db.exists("DocType", "Bill of Entry"):
+			return "Bill of Entry"
+		for dt in frappe.get_all(
+			"DocType", filters={"istable": 0, "name": ["not in", api.BLOCKED_DOCTYPES]}, pluck="name"
+		):
+			roles = frappe.get_all("DocPerm", filters={"parent": dt, "permlevel": 0}, pluck="role")
+			if roles and not (set(roles) & set(api.AUTOMATIC_ROLES)):
+				return dt
+		test_dt = "US Test Permissions"
+		if not frappe.db.exists("DocType", test_dt):
+			frappe.get_doc(
+				{
+					"doctype": "DocType",
+					"name": test_dt,
+					"module": "Core",
+					"custom": 1,
+					"permissions": [{"role": "System Manager", "read": 1, "write": 1, "create": 1}],
+				}
+			).insert(ignore_permissions=True)
+		return test_dt
 
 	def test_nonexistent_doctype_access(self):
 		with self.assertRaises(frappe.ValidationError):
@@ -237,62 +322,54 @@ class TestDoctypeAccessEdgeCases(IntegrationTestCase):
 
 	def test_permission_dependency_validation(self):
 		"""Test all permission dependencies: Cancel needs Submit, Submit needs Write, Amend needs Cancel, Import needs Create."""
-		doctype = "Purchase Receipt"
+		doctype, role = self._get_submittable_doctype_and_role()
 		had_custom = bool(frappe.db.exists("Custom DocPerm", {"parent": doctype}))
 		try:
 			# Cancel without Submit
 			with self.assertRaises(frappe.ValidationError):
-				api.set_doctype_access(doctype, {"Stock Manager": {"submit": 0, "cancel": 1}})
+				api.set_doctype_access(doctype, {role: {"submit": 0, "cancel": 1}})
 
 			# Submit without Write
 			with self.assertRaises(frappe.ValidationError):
-				api.set_doctype_access(doctype, {"Stock Manager": {"write": 0, "submit": 1}})
+				api.set_doctype_access(doctype, {role: {"write": 0, "submit": 1}})
 
 			# Amend without Cancel
 			with self.assertRaises(frappe.ValidationError):
-				api.set_doctype_access(doctype, {"Stock Manager": {"cancel": 0, "amend": 1}})
+				api.set_doctype_access(doctype, {role: {"cancel": 0, "amend": 1}})
 
 			# Import without Create
 			with self.assertRaises(frappe.ValidationError):
-				api.set_doctype_access(doctype, {"Stock Manager": {"create": 0, "import": 1}})
+				api.set_doctype_access(doctype, {role: {"create": 0, "import": 1}})
 		finally:
 			if not had_custom:
 				frappe.permissions.reset_perms(doctype)
 
 	def test_must_keep_read_permission(self):
 		"""Dropping read permission from all rules must be rejected."""
-		doctype = "Bill of Entry"
+		doctype = self._get_doctype_without_automatic_roles()
 		had_custom = bool(frappe.db.exists("Custom DocPerm", {"parent": doctype}))
+		roles = frappe.get_all("DocPerm", filters={"parent": doctype, "permlevel": 0}, pluck="role")
+		changes = {r: {"read": 0, "write": 1} for r in roles if r not in api.AUTOMATIC_ROLES}
 		try:
 			with self.assertRaises(frappe.ValidationError):
-				api.set_doctype_access(
-					doctype,
-					{
-						"Accounts Manager": {"read": 0, "write": 1},
-						"Accounts User": {"read": 0, "write": 1},
-						"Auditor": {"read": 0},
-						"Purchase User": {"read": 0},
-					},
-				)
+				api.set_doctype_access(doctype, changes)
 		finally:
 			if not had_custom:
 				frappe.permissions.reset_perms(doctype)
 
 	def test_must_keep_at_least_one_rule(self):
 		"""Removing all basic permissions from all rules on a doctype must be rejected."""
-		doctype = "Bill of Entry"
+		doctype = self._get_doctype_without_automatic_roles()
 		had_custom = bool(frappe.db.exists("Custom DocPerm", {"parent": doctype}))
+		roles = frappe.get_all("DocPerm", filters={"parent": doctype, "permlevel": 0}, pluck="role")
+		changes = {
+			r: {"read": 0, "write": 0, "create": 0, "submit": 0, "cancel": 0}
+			for r in roles
+			if r not in api.AUTOMATIC_ROLES
+		}
 		try:
 			with self.assertRaises(frappe.ValidationError):
-				api.set_doctype_access(
-					doctype,
-					{
-						"Accounts Manager": {"read": 0, "write": 0, "create": 0, "submit": 0, "cancel": 0},
-						"Accounts User": {"read": 0, "write": 0, "create": 0, "submit": 0, "cancel": 0},
-						"Auditor": {"read": 0, "write": 0, "create": 0, "submit": 0, "cancel": 0},
-						"Purchase User": {"read": 0, "write": 0, "create": 0, "submit": 0, "cancel": 0},
-					},
-				)
+				api.set_doctype_access(doctype, changes)
 		finally:
 			if not had_custom:
 				frappe.permissions.reset_perms(doctype)
@@ -304,7 +381,9 @@ class TestCreateTestUserEdgeCases(IntegrationTestCase):
 	def setUp(self):
 		super().setUp()
 		frappe.set_user("Administrator")
-		self.conf = patch.object(frappe.local, "conf", frappe._dict(frappe.local.conf, developer_mode=1, user_switcher_enabled=1))
+		self.conf = patch.object(
+			frappe.local, "conf", frappe._dict(frappe.local.conf, developer_mode=1, user_switcher_enabled=1)
+		)
 		self.conf.start()
 		self.addCleanup(self.conf.stop)
 		self.addCleanup(frappe.set_user, "Administrator")
@@ -355,9 +434,9 @@ class TestCreateTestUserEdgeCases(IntegrationTestCase):
 	def test_create_user_duplicate_email(self):
 		email = "us_dup_test@example.com"
 		if not frappe.db.exists("User", email):
-			frappe.get_doc({
-				"doctype": "User", "email": email, "first_name": "Dup", "send_welcome_email": 0
-			}).insert()
+			frappe.get_doc(
+				{"doctype": "User", "email": email, "first_name": "Dup", "send_welcome_email": 0}
+			).insert()
 		try:
 			with self.assertRaises(frappe.DuplicateEntryError):
 				api.create_test_user("Duplicate User", email, roles=[], switch=0)

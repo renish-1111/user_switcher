@@ -72,7 +72,10 @@ def _blocked_targets(real_user: str) -> list[str]:
 		return []
 
 	managers = frappe.get_all(
-		"Has Role", filters={"parenttype": "User", "role": "System Manager"}, pluck="parent", ignore_permissions=True
+		"Has Role",
+		filters={"parenttype": "User", "role": "System Manager"},
+		pluck="parent",
+		ignore_permissions=True,
 	)
 	managers = [m for m in managers if m.casefold() != real_user.casefold()]
 	if not managers:
@@ -152,7 +155,10 @@ def end_orphaned_session() -> None:
 
 @frappe.whitelist()
 def get_context(
-	txt: str | None = None, user_type: str | None = None, limit: int | str = 30, cached: list | str | None = None
+	txt: str | None = None,
+	user_type: str | None = None,
+	limit: int | str = 30,
+	cached: list | str | None = None,
 ):
 	"""Return switcher state and a filtered user list.
 
@@ -172,7 +178,7 @@ def get_context(
 
 	try:
 		limit = int(limit)
-	except (ValueError, TypeError):
+	except ValueError, TypeError:
 		limit = 30
 	limit = max(0, min(limit, 100))
 	if not limit:
@@ -201,7 +207,11 @@ def _stale_users(cached: list | str | None) -> list[str]:
 	names = [n.strip() for n in cached if isinstance(n, str) and n.strip()][:200]
 	if not names:
 		return []
-	alive = set(frappe.get_all("User", filters={"name": ["in", names], "enabled": 1}, pluck="name", ignore_permissions=True))
+	alive = set(
+		frappe.get_all(
+			"User", filters={"name": ["in", names], "enabled": 1}, pluck="name", ignore_permissions=True
+		)
+	)
 	seen = set()
 	stale = []
 	for n in names:
@@ -242,7 +252,9 @@ def _find_users(real_user: str, txt: str | None, user_type: str | None, limit: i
 
 
 def _user_info(user: str) -> dict:
-	info = frappe.db.get_value("User", (user or "").strip(), ["name", "full_name", "user_image", "user_type"], as_dict=True)
+	info = frappe.db.get_value(
+		"User", (user or "").strip(), ["name", "full_name", "user_image", "user_type"], as_dict=True
+	)
 	return info or {"name": user}
 
 
@@ -311,7 +323,11 @@ def switch_to_user(target_user: str):
 	real_user = canonical_real
 
 	canonical_target = frappe.db.get_value("User", str(target_user or "").strip(), "name")
-	if not canonical_target or canonical_target == "Guest" or not frappe.db.get_value("User", canonical_target, "enabled"):
+	if (
+		not canonical_target
+		or canonical_target == "Guest"
+		or not frappe.db.get_value("User", canonical_target, "enabled")
+	):
 		frappe.throw(_("Cannot switch to this user"))
 	target_user = canonical_target
 
@@ -334,9 +350,7 @@ def switch_to_user(target_user: str):
 
 	# login_as() creates a brand new session and sets the sid cookie, so the switch
 	# survives the reload (frappe.set_user() only affects the current request).
-	login_manager.login_as(
-		target_user, session_end=session_end, audit_user=audit_user
-	)
+	login_manager.login_as(target_user, session_end=session_end, audit_user=audit_user)
 
 	if target_user != real_user and hasattr(frappe.local.session_obj, "set_impersonated"):
 		# Keeps the "impersonating" banner in desk, tags Version logs, and lets us switch back.
@@ -376,9 +390,9 @@ def get_role_profiles() -> list[dict]:
 	"""
 	if not _can_switch():
 		_deny(_("Not permitted"), "list_role_profiles")
-	active_roles = set(frappe.get_all("Role", filters={"disabled": 0}, pluck="name", ignore_permissions=True)) - set(
-		AUTOMATIC_ROLES
-	)
+	active_roles = set(
+		frappe.get_all("Role", filters={"disabled": 0}, pluck="name", ignore_permissions=True)
+	) - set(AUTOMATIC_ROLES)
 	rows = frappe.get_all(
 		"Has Role",
 		filters={"parenttype": "Role Profile", "role": ["in", list(active_roles) or [""]]},
@@ -393,7 +407,9 @@ def get_role_profiles() -> list[dict]:
 
 
 @frappe.whitelist(methods=["POST"])
-def create_test_user(full_name: str, email: str, roles: list | str | None = None, switch: int | str | bool = 1):
+def create_test_user(
+	full_name: str, email: str, roles: list | str | None = None, switch: int | str | bool = 1
+):
 	"""Create an enabled test user with the given roles, optionally switching into it.
 
 	Args:
@@ -464,7 +480,12 @@ def create_test_user(full_name: str, email: str, roles: list | str | None = None
 	if cint(switch):
 		switch_to_user(user.name)
 
-	return {"name": user.name, "full_name": user.full_name, "user_type": user.user_type, "roles": sorted(valid_roles)}
+	return {
+		"name": user.name,
+		"full_name": user.full_name,
+		"user_type": user.user_type,
+		"roles": sorted(valid_roles),
+	}
 
 
 def _check_role_target(user: str) -> str:
@@ -552,8 +573,20 @@ def set_user_roles(user: str, roles: list | str | None = None):
 # Level-0 rights offered in the switcher, in display order. Field-level (permlevel > 0) and
 # "only if creator" rules stay in Role Permission Manager.
 ACCESS_RIGHTS = (
-	"select", "read", "write", "create", "delete", "submit", "cancel", "amend",
-	"print", "email", "report", "import", "export", "share",
+	"select",
+	"read",
+	"write",
+	"create",
+	"delete",
+	"submit",
+	"cancel",
+	"amend",
+	"print",
+	"email",
+	"report",
+	"import",
+	"export",
+	"share",
 )
 # Frappe refuses a rule with none of these set ("No basic permissions set")
 BASIC_RIGHTS = ("select", "read", "write", "create", "submit", "cancel")
@@ -590,9 +623,9 @@ def _level_zero_rules(doctype: str) -> list[dict]:
 	"""The doctype's effective level-0 rules: Custom DocPerm once customised, else the standard DocPerm."""
 	fields = ["role", "if_owner", *ACCESS_RIGHTS]
 	filters = {"parent": doctype, "permlevel": 0}
-	return frappe.get_all("Custom DocPerm", filters=filters, fields=fields, ignore_permissions=True) or frappe.get_all(
-		"DocPerm", filters=filters, fields=fields, ignore_permissions=True
-	)
+	return frappe.get_all(
+		"Custom DocPerm", filters=filters, fields=fields, ignore_permissions=True
+	) or frappe.get_all("DocPerm", filters=filters, fields=fields, ignore_permissions=True)
 
 
 @frappe.whitelist()
@@ -708,9 +741,9 @@ def set_doctype_access(doctype: str, changes: dict | str | None = None):
 	if not isinstance(changes, dict):
 		frappe.throw(_("Invalid changes payload"))
 
-	assignable = set(frappe.get_all("Role", filters={"disabled": 0}, pluck="name", ignore_permissions=True)) - set(
-		AUTOMATIC_ROLES
-	)
+	assignable = set(
+		frappe.get_all("Role", filters={"disabled": 0}, pluck="name", ignore_permissions=True)
+	) - set(AUTOMATIC_ROLES)
 
 	sanitized_changes = {}
 	for role, values in changes.items():
@@ -727,12 +760,22 @@ def set_doctype_access(doctype: str, changes: dict | str | None = None):
 
 	setup_custom_perms(doctype)
 	for role, values in sanitized_changes.items():
-		name = frappe.db.get_value("Custom DocPerm", {"parent": doctype, "role": role, "permlevel": 0, "if_owner": 0})
+		name = frappe.db.get_value(
+			"Custom DocPerm", {"parent": doctype, "role": role, "permlevel": 0, "if_owner": 0}
+		)
 		if name:
 			rule = frappe.get_doc("Custom DocPerm", name)
 		else:
 			rule = frappe.new_doc("Custom DocPerm")
-			rule.update({"parent": doctype, "parenttype": "DocType", "parentfield": "permissions", "role": role, "permlevel": 0})
+			rule.update(
+				{
+					"parent": doctype,
+					"parenttype": "DocType",
+					"parentfield": "permissions",
+					"role": role,
+					"permlevel": 0,
+				}
+			)
 			# The doctype defaults turn on read and export; start from nothing instead
 			rule.update({r: 0 for r in ACCESS_RIGHTS})
 		rule.update(values)

@@ -1,0 +1,143 @@
+name: CI
+
+on:
+  push:
+    branches:
+      - develop
+      - main
+      - "feature/**"
+      - "version-*"
+  pull_request:
+    branches:
+      - develop
+      - main
+      - "version-*"
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  linter:
+    name: Code Linter & Style
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.14"
+
+      - name: Install Ruff
+        run: pip install ruff
+
+      - name: Run Ruff Linter
+        run: ruff check .
+
+      - name: Run Ruff Format Check
+        run: ruff format --check .
+
+  tests:
+    name: Unit & Cypress E2E Tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    needs: linter
+
+    services:
+      mariadb:
+        image: mariadb:11.8
+        env:
+          MARIADB_ROOT_PASSWORD: "root"
+        ports:
+          - 3306:3306
+        options: --health-cmd="mariadb-admin ping -proot" --health-interval=5s --health-timeout=2s --health-retries=5
+
+      redis:
+        image: redis:alpine
+        ports:
+          - 6379:6379
+        options: --health-cmd="redis-cli ping" --health-interval=5s --health-timeout=2s --health-retries=5
+
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.14"
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: "npm"
+          cache-dependency-path: package-lock.json
+
+      - name: Cache pip
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/pip
+          key: ${{ runner.os }}-pip-${{ hashFiles('**/pyproject.toml', '**/requirements.txt') }}
+          restore-keys: |
+            ${{ runner.os }}-pip-
+
+      - name: Cache Cypress Binary
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/Cypress
+          key: ${{ runner.os }}-cypress-${{ hashFiles('package-lock.json') }}
+          restore-keys: |
+            ${{ runner.os }}-cypress-
+
+      - name: Install Frappe Bench & Apps
+        run: bash .github/helper/install.sh
+        env:
+          FRAPPE_BRANCH: develop
+          ERPNEXT_BRANCH: develop
+          INSTALL_ERPNEXT: "1"
+
+      - name: Run Backend Unit Tests
+        run: |
+          cd ~/frappe-bench
+          bench --site account.localhost run-tests --app user_switcher
+
+      - name: Start Bench Web Server for E2E
+        run: |
+          cd ~/frappe-bench
+          bench serve --port 8001 > ~/serve.log 2>&1 &
+          # Wait until web server responds
+          timeout 60 bash -c 'until curl -s http://account.localhost:8001/api/method/ping > /dev/null; do sleep 2; done'
+          echo "Bench server is up and responding."
+
+      - name: Seed User for E2E
+        run: |
+          cd ~/frappe-bench
+          bench --site account.localhost execute frappe.client.insert --kwargs '{"doc": {"doctype": "User", "email": "renish@example.com", "first_name": "renish", "user_type": "System User", "roles": [{"role": "Accounts User"}], "send_welcome_email": 0, "enabled": 1}}'
+          bench --site account.localhost execute frappe.db.commit
+
+      - name: Run Cypress E2E Tests
+        run: |
+          cd ~/frappe-bench/apps/user_switcher
+          npx cypress run --headless
+
+      - name: Dump Bench Logs on Failure
+        if: failure()
+        run: |
+          cd ~/frappe-bench
+          echo "=== ~/serve.log ==="; tail -n 150 ~/serve.log || true
+          for f in logs/web.log logs/web.error.log logs/frappe.log logs/user_switcher.log sites/account.localhost/logs/*.log; do
+            [ -f "$f" ] && { echo "=== $f ==="; tail -n 80 "$f"; }
+          done || true
+
+      - name: Upload Cypress Artifacts on Failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: cypress-failure-artifacts
+          path: |
+            ~/frappe-bench/apps/user_switcher/cypress/screenshots
+            ~/frappe-bench/apps/user_switcher/cypress/videos
