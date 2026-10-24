@@ -75,7 +75,7 @@ fi
 bench --verbose --site account.localhost install-app user_switcher
 
 echo "Building assets..."
-bench build --app user_switcher
+bench build
 
 echo "127.0.0.1 account.localhost" | sudo tee -a /etc/hosts
 
