@@ -113,6 +113,12 @@ jobs:
           timeout 60 bash -c 'until curl -s http://account.localhost:8001/api/method/ping > /dev/null; do sleep 2; done'
           echo "Bench server is up and responding."
 
+      - name: Seed User for E2E
+        run: |
+          cd ~/frappe-bench
+          bench --site account.localhost execute frappe.client.insert --kwargs '{"doc": {"doctype": "User", "email": "renish@example.com", "first_name": "renish", "send_welcome_email": 0, "enabled": 1}}'
+          bench --site account.localhost execute frappe.db.commit
+
       - name: Run Cypress E2E Tests
         run: |
           cd ~/frappe-bench/apps/user_switcher
