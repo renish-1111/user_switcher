@@ -43,6 +43,11 @@ cp -r "${GITHUB_WORKSPACE}/.github/helper/site_config.json" ~/frappe-bench/sites
 
 cd ~/frappe-bench || exit
 
+# Point bench at the redis service container (bench defaults to ports 13000/11000)
+bench set-config -g redis_cache "redis://127.0.0.1:6379"
+bench set-config -g redis_queue "redis://127.0.0.1:6379"
+bench set-config -g redis_socketio "redis://127.0.0.1:6379"
+
 # Disable unused background services in Procfile during CI
 sed -i 's/watch:/# watch:/g' Procfile || true
 sed -i 's/schedule:/# schedule:/g' Procfile || true
