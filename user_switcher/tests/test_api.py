@@ -28,7 +28,9 @@ class TestUserSwitcherAccess(IntegrationTestCase):
 
 class TestUserSwitchLog(IntegrationTestCase):
 	def test_manual_create_blocked(self):
-		doc = frappe.get_doc({"doctype": "User Switch Log", "real_user": "Administrator", "target_user": "Guest"})
+		doc = frappe.get_doc(
+			{"doctype": "User Switch Log", "real_user": "Administrator", "target_user": "Guest"}
+		)
 		self.assertRaises(frappe.PermissionError, doc.insert)
 
 	def test_log_switch_creates_readonly_record(self):
@@ -51,12 +53,22 @@ class TestBlockedTargets(IntegrationTestCase):
 	def test_system_manager_blocked_from_administrator_and_other_managers(self):
 		frappe.set_user("Administrator")
 		frappe.get_doc(
-			{"doctype": "User", "email": "us_sm_a@example.com", "first_name": "A", "send_welcome_email": 0,
-			 "roles": [{"role": "System Manager"}]}
+			{
+				"doctype": "User",
+				"email": "us_sm_a@example.com",
+				"first_name": "A",
+				"send_welcome_email": 0,
+				"roles": [{"role": "System Manager"}],
+			}
 		).insert()
 		frappe.get_doc(
-			{"doctype": "User", "email": "us_sm_b@example.com", "first_name": "B", "send_welcome_email": 0,
-			 "roles": [{"role": "System Manager"}]}
+			{
+				"doctype": "User",
+				"email": "us_sm_b@example.com",
+				"first_name": "B",
+				"send_welcome_email": 0,
+				"roles": [{"role": "System Manager"}],
+			}
 		).insert()
 		blocked = api._blocked_targets("us_sm_a@example.com")
 		self.assertIn("Administrator", blocked)
@@ -72,15 +84,26 @@ class TestBlockedTargets(IntegrationTestCase):
 class TestManageRoles(IntegrationTestCase):
 	def setUp(self):
 		frappe.set_user("Administrator")
-		self.conf = patch.object(frappe.local, "conf", frappe._dict(developer_mode=1, user_switcher_enabled=1))
+		self.conf = patch.object(
+			frappe.local, "conf", frappe._dict(developer_mode=1, user_switcher_enabled=1)
+		)
 		self.conf.start()
 		self.addCleanup(self.conf.stop)
 
 	def _user(self, email, roles=()):
-		return frappe.get_doc(
-			{"doctype": "User", "email": email, "first_name": "R", "send_welcome_email": 0,
-			 "roles": [{"role": r} for r in roles]}
-		).insert().name
+		return (
+			frappe.get_doc(
+				{
+					"doctype": "User",
+					"email": email,
+					"first_name": "R",
+					"send_welcome_email": 0,
+					"roles": [{"role": r} for r in roles],
+				}
+			)
+			.insert()
+			.name
+		)
 
 	def test_add_and_remove_roles(self):
 		user = self._user("us_roles_t@example.com", ["Website Manager"])
@@ -107,7 +130,9 @@ class TestManageRoles(IntegrationTestCase):
 class TestSwitchHardening(IntegrationTestCase):
 	def setUp(self):
 		frappe.set_user("Administrator")
-		self.conf = patch.object(frappe.local, "conf", frappe._dict(developer_mode=1, user_switcher_enabled=1))
+		self.conf = patch.object(
+			frappe.local, "conf", frappe._dict(developer_mode=1, user_switcher_enabled=1)
+		)
 		self.conf.start()
 		self.addCleanup(self.conf.stop)
 
@@ -115,9 +140,18 @@ class TestSwitchHardening(IntegrationTestCase):
 		self.assertEqual(api.get_context(limit=-5), {"allowed": True})
 
 	def test_failed_audit_write_blocks_the_switch(self):
-		target = frappe.get_doc(
-			{"doctype": "User", "email": "us_audit_t@example.com", "first_name": "T", "send_welcome_email": 0}
-		).insert().name
+		target = (
+			frappe.get_doc(
+				{
+					"doctype": "User",
+					"email": "us_audit_t@example.com",
+					"first_name": "T",
+					"send_welcome_email": 0,
+				}
+			)
+			.insert()
+			.name
+		)
 		login_manager = MagicMock()
 		with (
 			patch.object(frappe.local, "login_manager", login_manager, create=True),
@@ -133,10 +167,19 @@ class TestAccessGates(IntegrationTestCase):
 		frappe.set_user("Administrator")
 
 	def _manager(self, email):
-		return frappe.get_doc(
-			{"doctype": "User", "email": email, "first_name": "M", "send_welcome_email": 0,
-			 "roles": [{"role": "System Manager"}]}
-		).insert().name
+		return (
+			frappe.get_doc(
+				{
+					"doctype": "User",
+					"email": email,
+					"first_name": "M",
+					"send_welcome_email": 0,
+					"roles": [{"role": "System Manager"}],
+				}
+			)
+			.insert()
+			.name
+		)
 
 	def _impersonated_by(self, user):
 		"""Mark the current test session as impersonated by `user`, undone after the test."""
@@ -203,7 +246,9 @@ class TestDoctypeAccess(IntegrationTestCase):
 
 	def setUp(self):
 		frappe.set_user("Administrator")
-		self.conf = patch.object(frappe.local, "conf", frappe._dict(frappe.local.conf, developer_mode=1, user_switcher_enabled=1))
+		self.conf = patch.object(
+			frappe.local, "conf", frappe._dict(frappe.local.conf, developer_mode=1, user_switcher_enabled=1)
+		)
 		self.conf.start()
 		self.had_custom = bool(frappe.db.exists("Custom DocPerm", {"parent": self.DOCTYPE}))
 		if not frappe.db.exists("Role", "US Access Tester"):
@@ -216,7 +261,10 @@ class TestDoctypeAccess(IntegrationTestCase):
 
 	def rule(self, role):
 		return frappe.db.get_value(
-			"Custom DocPerm", {"parent": self.DOCTYPE, "role": role, "permlevel": 0, "if_owner": 0}, ["read", "write", "create"], as_dict=True
+			"Custom DocPerm",
+			{"parent": self.DOCTYPE, "role": role, "permlevel": 0, "if_owner": 0},
+			["read", "write", "create"],
+			as_dict=True,
 		)
 
 	def test_blocked_without_switcher(self):
@@ -260,7 +308,11 @@ class TestDoctypeAccess(IntegrationTestCase):
 	def test_role_profiles_list_their_roles(self):
 		if not frappe.db.exists("Role Profile", "US Access Profile"):
 			frappe.get_doc(
-				{"doctype": "Role Profile", "role_profile": "US Access Profile", "roles": [{"role": "US Access Tester"}, {"role": "All"}]}
+				{
+					"doctype": "Role Profile",
+					"role_profile": "US Access Profile",
+					"roles": [{"role": "US Access Tester"}, {"role": "All"}],
+				}
 			).insert()
 		profile = next(p for p in api.get_role_profiles() if p["name"] == "US Access Profile")
 		self.assertEqual(profile["roles"], ["US Access Tester"])

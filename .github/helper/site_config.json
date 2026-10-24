@@ -1,0 +1,14 @@
+{
+  "db_host": "127.0.0.1",
+  "db_port": 3306,
+  "db_name": "test_frappe",
+  "db_password": "test_frappe",
+  "use_mysqlclient": 1,
+  "admin_password": "admin",
+  "root_login": "root",
+  "root_password": "root",
+  "host_name": "http://account.localhost:8001",
+  "developer_mode": 1,
+  "user_switcher_enabled": 1,
+  "allow_tests": true
+}
