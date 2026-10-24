@@ -124,6 +124,14 @@ jobs:
           cd ~/frappe-bench/apps/user_switcher
           npx cypress run --headless
 
+      - name: Dump Bench Logs on Failure
+        if: failure()
+        run: |
+          cd ~/frappe-bench
+          for f in logs/web.log logs/web.error.log logs/frappe.log logs/user_switcher.log sites/account.localhost/logs/*.log; do
+            [ -f "$f" ] && { echo "=== $f ==="; tail -n 80 "$f"; }
+          done || true
+
       - name: Upload Cypress Artifacts on Failure
         if: failure()
         uses: actions/upload-artifact@v4
