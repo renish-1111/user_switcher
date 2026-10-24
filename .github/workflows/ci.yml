@@ -116,7 +116,7 @@ jobs:
       - name: Seed User for E2E
         run: |
           cd ~/frappe-bench
-          bench --site account.localhost execute frappe.client.insert --kwargs '{"doc": {"doctype": "User", "email": "renish@example.com", "first_name": "renish", "user_type": "System User", "roles": [{"role": "Blogger"}], "send_welcome_email": 0, "enabled": 1}}'
+          bench --site account.localhost execute frappe.client.insert --kwargs '{"doc": {"doctype": "User", "email": "renish@example.com", "first_name": "renish", "user_type": "System User", "roles": [{"role": "Accounts User"}], "send_welcome_email": 0, "enabled": 1}}'
           bench --site account.localhost execute frappe.db.commit
 
       - name: Run Cypress E2E Tests
