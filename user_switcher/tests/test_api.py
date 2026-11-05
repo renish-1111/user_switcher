@@ -512,6 +512,8 @@ class TestDoctypeAccess(IntegrationTestCase):
 		groups = {d["name"]: d["group"] for d in rows}
 		self.assertEqual((groups["Purchase Order"], groups["Supplier"]), ("", "Purchase Order"))
 		self.assertEqual(groups["Item"], "Items (child table)")
+		# Mandatory links name the field: Item Code, not an optional Item link earlier in the table
+		self.assertEqual(next(d["hint"] for d in rows if d["name"] == "Item"), "Item Code")
 		self.assertFalse({"DocType", "Purchase Order Item"} & set(names))
 		# Typing still searches every doctype
 		self.assertEqual(api.search_doctypes("rol", related_to="Purchase Order")[0]["name"], "Role")

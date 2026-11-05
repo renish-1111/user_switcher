@@ -849,6 +849,11 @@ def search_doctypes(
 	return [row for _rank, row in ranked[:12]]
 
 
+def _mandatory_first(fields: list) -> list:
+	"""Mandatory fields first, each group in form order (so Item Code wins over an optional Item link)."""
+	return sorted(fields, key=lambda df: not df.reqd)
+
+
 def _linked_doctypes(doctype: str) -> list[dict]:
 	"""`doctype` first, then the doctypes its Link fields point to: its own fields, then its child tables'.
 
@@ -858,17 +863,17 @@ def _linked_doctypes(doctype: str) -> list[dict]:
 	Returns:
 		`[{"name", "module", "group", "hint"}]` in that order. `group` is where the link was found:
 		`doctype` itself, or "<table label> (child table)"; blank for `doctype`'s own row. `hint` is the
-		label of the first field that links there. A doctype linked from several places is listed once,
+		label of the first field that links there (mandatory fields first). A doctype linked from several places is listed once,
 		at the first. Child tables themselves (they take their parent's permissions) and doctypes whose
 		access can't be managed are left out.
 	"""
 	meta = frappe.get_meta(doctype)
 	links = {doctype: ("", "")}
-	for df in meta.get_link_fields():
+	for df in _mandatory_first(meta.get_link_fields()):
 		links.setdefault(df.options, (_(doctype), _(df.label or df.fieldname)))
 	for table in meta.get_table_fields():
 		group = _("{0} (child table)").format(_(table.label or table.fieldname))
-		for df in frappe.get_meta(table.options).get_link_fields():
+		for df in _mandatory_first(frappe.get_meta(table.options).get_link_fields()):
 			links.setdefault(df.options, (group, _(df.label or df.fieldname)))
 	found = {
 		row.name: row
