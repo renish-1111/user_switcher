@@ -208,7 +208,9 @@ def retire_previous_sessions() -> None:
 	frappe.db.commit()
 
 
-@frappe.whitelist()
+# ? GUEST ALLOWED SO A LOGGED-OUT PAGE GETS {"allowed": False} INSTEAD OF A "NOT WHITELISTED" POPUP;
+# ? _can_switch REFUSES GUEST BEFORE ANYTHING IS READ
+@frappe.whitelist(allow_guest=True)
 def get_context(
 	txt: str | None = None,
 	user_type: str | None = None,

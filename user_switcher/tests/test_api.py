@@ -20,6 +20,14 @@ class TestUserSwitcherAccess(IntegrationTestCase):
 			self.assertFalse(api._can_switch("Guest"))
 			self.assertTrue(api._can_switch("Administrator"))
 
+	def test_logged_out_probe_is_quietly_refused(self):
+		frappe.set_user("Guest")
+		try:
+			with patch.object(frappe.local, "conf", frappe._dict(developer_mode=1, user_switcher_enabled=1)):
+				self.assertEqual(api.get_context(txt="a"), {"allowed": False})
+		finally:
+			frappe.set_user("Administrator")
+
 	def test_system_manager_cannot_list_administrator(self):
 		with patch.object(frappe.local, "conf", frappe._dict(developer_mode=1, user_switcher_enabled=1)):
 			names = [u.name for u in api._find_users("test@example.com", None, None, 100)]
