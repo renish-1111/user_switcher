@@ -809,19 +809,27 @@ def _level_zero_rules(doctype: str) -> list[dict]:
 
 
 @frappe.whitelist()
-def search_doctypes(txt: str | None = None, for_user_permission: int | str = 0) -> list[dict]:
+def search_doctypes(
+	txt: str | None = None, for_user_permission: int | str = 0, related_to: str | None = None
+) -> list[dict]:
 	"""DocTypes whose access can be managed, matching `txt` the way Frappe's search bar does.
 
 	Args:
 		txt: Search text; empty lists the best suggestions.
 		for_user_permission: Truthy to search doctypes a User Permission can point at (no singles),
 			suggesting the ones already used for User Permissions, then common ones, before anything is typed.
+		related_to: A doctype (usually the page open in desk). Before anything is typed, suggest it
+			and the doctypes its Link fields point to (see `_linked_doctypes`).
 
 	Returns:
-		Up to 12 `{"name", "module"}` dicts, best match first (see `_match_rank`), then shortest name.
+		Up to 12 `{"name", "module"}` dicts, best match first (see `_match_rank`), then shortest name;
+		linked suggestions also carry `hint` (the field that links to it) and are not capped.
 	"""
 	if not _can_switch():
 		_deny(_("Not permitted"), "search_doctypes")
+	related_to = str(related_to or "").strip()
+	if related_to and not str(txt or "").strip() and frappe.db.exists("DocType", related_to):
+		return _linked_doctypes(related_to)
 	filters = [["istable", "=", 0], ["name", "not in", BLOCKED_DOCTYPES]]
 	if cint(for_user_permission):
 		filters.append(["issingle", "=", 0])
@@ -839,6 +847,37 @@ def search_doctypes(txt: str | None = None, for_user_permission: int | str = 0) 
 	ranked = [(rank, row) for rank, row in ranked if rank]
 	ranked.sort(key=lambda x: (x[0], len(x[1].name), x[1].name))
 	return [row for _rank, row in ranked[:12]]
+
+
+def _linked_doctypes(doctype: str) -> list[dict]:
+	"""`doctype` first, then the doctypes its Link fields point to: its own fields, then its child tables'.
+
+	Opening a document means reading what its links point to, so these are the doctypes a user
+	usually needs access to as well.
+
+	Returns:
+		`[{"name", "module", "hint"}]`; `hint` names the first field that links there (blank for `doctype`).
+		Child tables and doctypes whose access can't be managed are left out.
+	"""
+	meta = frappe.get_meta(doctype)
+	hints = {doctype: ""}
+	for df in meta.get_link_fields():
+		hints.setdefault(df.options, _(df.label or df.fieldname))
+	for table in meta.get_table_fields():
+		for df in frappe.get_meta(table.options).get_link_fields():
+			hints.setdefault(
+				df.options, f"{_(table.label or table.fieldname)} > {_(df.label or df.fieldname)}"
+			)
+	found = {
+		row.name: row
+		for row in frappe.get_all(
+			"DocType",
+			filters=[["name", "in", list(hints)], ["istable", "=", 0], ["name", "not in", BLOCKED_DOCTYPES]],
+			fields=["name", "module"],
+			ignore_permissions=True,
+		)
+	}
+	return [{"name": n, "module": found[n].module, "hint": hints[n]} for n in hints if n in found]
 
 
 def _suggested_permission_doctypes() -> list[dict]:

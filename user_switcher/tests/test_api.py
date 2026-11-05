@@ -503,6 +503,17 @@ class TestDoctypeAccess(IntegrationTestCase):
 		self.assertEqual(names[0], "Role")
 		self.assertNotIn("DocType", [d["name"] for d in api.search_doctypes("doctype")])
 
+	def test_linked_doctypes_suggested_for_the_page(self):
+		rows = api.search_doctypes(related_to="Purchase Order")
+		names = [d["name"] for d in rows]
+		self.assertEqual(names[0], "Purchase Order")
+		# Own Link fields, then the child tables' (Item comes from the items table)
+		self.assertTrue({"Supplier", "Company", "Item"} <= set(names))
+		self.assertIn(" > ", next(d["hint"] for d in rows if d["name"] == "Item"))
+		self.assertFalse({"DocType", "Purchase Order Item"} & set(names))
+		# Typing still searches every doctype
+		self.assertEqual(api.search_doctypes("rol", related_to="Purchase Order")[0]["name"], "Role")
+
 	def test_role_profiles_list_their_roles(self):
 		if not frappe.db.exists("Role Profile", "US Access Profile"):
 			frappe.get_doc(

@@ -1566,7 +1566,7 @@
 					? dt_options
 							.map((d, i) => `<span class="us-combo-option ${i === dt_active ? "is-active" : ""}" role="option" id="us-dt-${i}"
 								aria-selected="${i === dt_active}" data-i="${i}">
-								<span class="us-combo-name">${mark(d.name)}</span><span class="us-combo-meta">${esc(d.module || "")}</span>
+								<span class="us-combo-name">${mark(d.name)}</span><span class="us-combo-meta">${esc(dt_meta(d))}</span>
 							</span>`)
 							.join("")
 					: `<span class="us-combo-empty">${t("No DocType matches “{0}”", [esc(q)])}</span>`
@@ -1581,20 +1581,34 @@
 			load_access(name);
 		}
 
-		$dt_input.on("input focus", (e) => {
+		// Linked suggestions say which field links there; the page's own doctype comes first
+		const dt_meta = (d) => d.hint || (d.hint === "" && d.name === route_doctype() ? t("This page") : d.module || "");
+
+		// Nothing typed: the page's doctype (or the loaded one) and the doctypes its fields link to
+		function load_dt(q, wait) {
 			clearTimeout(dt_timer);
-			const q = $dt_input.val().trim();
-			// Focusing a field that already shows the loaded doctype shouldn't pop the list open
-			if (e.type === "focus" && q === state.access?.data?.doctype) return;
 			dt_timer = setTimeout(() => {
 				const request = ++dt_request;
-				frappe.call({ method: `${API}.search_doctypes`, args: { txt: q }, type: "GET" }).then((r) => {
+				const related_to = route_doctype() || state.access?.data?.doctype || "";
+				frappe.call({ method: `${API}.search_doctypes`, args: { txt: q, related_to }, type: "GET" }).then((r) => {
 					if (request !== dt_request || !$dt_input.is(":focus")) return;
 					dt_options = r.message || [];
 					dt_active = dt_options.length ? 0 : -1;
 					paint_dt_list(q);
 				});
-			}, e.type === "focus" ? 0 : 150);
+			}, wait);
+		}
+
+		const shows_loaded = () => $dt_input.val().trim() === state.access?.data?.doctype;
+
+		$dt_input.on("input focus", (e) => {
+			// The focus given on opening the screen shouldn't pop the list over the roles
+			if (e.type === "focus" && shows_loaded()) return;
+			load_dt($dt_input.val().trim(), e.type === "focus" ? 0 : 150);
+		});
+		// A click on the field that shows the loaded doctype lists the linked doctypes to switch to
+		$dt_input.on("click", () => {
+			if ($dt_list.prop("hidden") && shows_loaded()) load_dt("", 0);
 		});
 
 		$dt_input.on("keydown", (e) => {
