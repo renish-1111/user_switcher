@@ -266,6 +266,38 @@ class TestSwitchHardening(IntegrationTestCase):
 			self.assertRaises(frappe.ValidationError, api.switch_to_user, target)
 		login_manager.login_as.assert_not_called()
 
+	def test_switch_keeps_the_old_session_for_now(self):
+		target = (
+			frappe.get_doc(
+				{
+					"doctype": "User",
+					"email": "us_grace_t@example.com",
+					"first_name": "T",
+					"send_welcome_email": 0,
+				}
+			)
+			.insert()
+			.name
+		)
+		old_session, new_session = MagicMock(), MagicMock()
+		old_session.data.data = frappe._dict(
+			{api.RETIRED_SESSIONS: {"sids": ["older"], "at": frappe.utils.now()}}
+		)
+		new_session.data.data = frappe._dict()
+		login_manager = MagicMock()
+		login_manager.login_as.side_effect = lambda *a, **k: setattr(frappe.local, "session_obj", new_session)
+		with (
+			patch.object(frappe.local, "login_manager", login_manager, create=True),
+			patch.object(frappe.local, "session_obj", old_session, create=True),
+			patch.dict(frappe.session, {"sid": "old-sid"}),
+			patch.object(api, "delete_session") as delete,
+		):
+			api.switch_to_user(target)
+		delete.assert_not_called()
+		self.assertEqual(new_session.data.data[api.RETIRED_SESSIONS]["sids"], ["older", "old-sid"])
+		self.assertEqual(new_session.data.data.impersonated_by, "Administrator")
+		new_session.update.assert_called_once_with(force=True)
+
 
 class TestAccessGates(IntegrationTestCase):
 	def setUp(self):
@@ -333,7 +365,33 @@ class TestAccessGates(IntegrationTestCase):
 	def test_normal_session_is_untouched(self):
 		with patch.object(api, "delete_session") as delete:
 			api.end_orphaned_session()
+			api.retire_previous_sessions()
 		delete.assert_not_called()
+
+	def _replaced(self, seconds_ago):
+		"""Mark the current test session as having replaced two sessions `seconds_ago`."""
+		previous = frappe.session.get("data")
+		at = frappe.utils.add_to_date(frappe.utils.now(), seconds=-seconds_ago, as_string=True)
+		frappe.session["data"] = frappe._dict({api.RETIRED_SESSIONS: {"sids": ["old-a", "old-b"], "at": at}})
+		self.addCleanup(frappe.session.__setitem__, "data", previous)
+
+	def test_replaced_sessions_survive_the_grace_period(self):
+		# A request still in flight with the old sid must not get "session expired" (it would clear the cookie)
+		self._replaced(2)
+		with patch.object(api, "delete_session") as delete:
+			api.retire_previous_sessions()
+		delete.assert_not_called()
+
+	def test_replaced_sessions_are_deleted_after_the_grace_period(self):
+		self._replaced(30)
+		with (
+			patch.object(api, "delete_session") as delete,
+			patch.object(frappe.local, "session_obj", MagicMock(), create=True),
+			patch.object(frappe.db, "commit"),
+		):
+			api.retire_previous_sessions()
+		self.assertEqual([c.args[0] for c in delete.call_args_list], ["old-a", "old-b"])
+		self.assertNotIn(api.RETIRED_SESSIONS, frappe.session.data)
 
 	def test_denied_request_is_logged(self):
 		logger = MagicMock()

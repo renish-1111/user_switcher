@@ -446,7 +446,16 @@
 			const left = minutes ? auto_back.started() + minutes * 60000 - Date.now() : 0;
 			if (minutes && left <= 0) {
 				clearInterval(paint_auto_back.tick);
-				switch_back();
+				// Every open tab hits the deadline together: the first switches back, the others just reload
+				const lock = `${AUTO_BACK_KEY}:switching:${who.real}`;
+				setTimeout(() => {
+					if (Date.now() - (+storage(localStorage, lock) || 0) < 15000) {
+						setTimeout(() => window.location.reload(), 4000);
+						return;
+					}
+					storage(localStorage, lock, String(Date.now()));
+					switch_back();
+				}, Math.random() * 1500);
 				return;
 			}
 			$timer

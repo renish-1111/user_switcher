@@ -15,6 +15,9 @@ DOCTYPE_VIEWS = ("List", "Form", "Report", "Tree", "Image", "Kanban", "Calendar"
 ROLE_SNAPSHOTS = "__user_switcher_roles"
 # Test users carry this in their bio (see create_test_user)
 TEST_USER_MARK = "%User Switcher%"
+# Session data key holding the sessions a switch replaced, and how long they stay usable
+RETIRED_SESSIONS = "user_switcher_retired"
+RETIRE_AFTER_SECONDS = 10
 
 
 def _real_user() -> str:
@@ -171,6 +174,27 @@ def end_orphaned_session() -> None:
 	# The error handler rolls the request back, which would undo the delete
 	frappe.db.commit()
 	raise frappe.SessionExpired
+
+
+def retire_previous_sessions() -> None:
+	"""`before_request` hook: delete the sessions a switch replaced, a few seconds after the switch.
+
+	A switch keeps the old session alive briefly (see `switch_to_user`); the first request made
+	with the new session after `RETIRE_AFTER_SECONDS` deletes it.
+	"""
+	data = getattr(frappe.session, "data", None)
+	retired = data.get(RETIRED_SESSIONS) if isinstance(data, dict) else None
+	if (
+		not retired
+		or frappe.utils.time_diff_in_seconds(frappe.utils.now(), retired["at"]) < RETIRE_AFTER_SECONDS
+	):
+		return
+	for sid in retired["sids"]:
+		delete_session(sid, reason="Switched user via User Switcher")
+	data.pop(RETIRED_SESSIONS)
+	frappe.local.session_obj.update(force=True)
+	# GET requests are not committed, which would bring the deleted sessions back
+	frappe.db.commit()
 
 
 @frappe.whitelist()
@@ -442,17 +466,24 @@ def switch_to_user(target_user: str, route: list | str | None = None):
 	session_data = getattr(getattr(session_obj, "data", None), "data", None)
 	session_end = getattr(session_data, "session_end", None) if session_data else None
 	audit_user = getattr(session_data, "audit_user", None) if session_data else None
+	# Sessions the old one was itself still waiting to retire (two switches within a few seconds)
+	waiting = (session_data.get(RETIRED_SESSIONS) or {}).get("sids", []) if session_data else []
 	login_manager = frappe.local.login_manager
 
 	# login_as() creates a brand new session and sets the sid cookie, so the switch
 	# survives the reload (frappe.set_user() only affects the current request).
 	login_manager.login_as(target_user, session_end=session_end, audit_user=audit_user)
 
-	if target_user != real_user and hasattr(frappe.local.session_obj, "set_impersonated"):
-		# Keeps the "impersonating" banner in desk, tags Version logs, and lets us switch back.
-		frappe.local.session_obj.set_impersonated(real_user)
+	new_session = frappe.local.session_obj
+	if target_user != real_user:
+		# Keeps the "impersonating" banner in desk, tags Version logs, and lets us switch back
+		# (what Session.set_impersonated does, without its own extra session write)
+		new_session.data.data.impersonated_by = real_user
 
-	delete_session(old_sid, reason="Switched user via User Switcher")
+	# ? DON'T DELETE THE OLD SESSION YET: A REQUEST STILL IN FLIGHT WITH ITS SID WOULD GET "SESSION EXPIRED",
+	# ? AND FRAPPE'S REPLY CLEARS THE BROWSER'S SID COOKIE, LOGGING THE USER OUT. retire_previous_sessions DELETES IT.
+	new_session.data.data[RETIRED_SESSIONS] = {"sids": [*waiting, old_sid], "at": frappe.utils.now()}
+	new_session.update(force=True)
 
 	return {"current_user": target_user, "can_stay": can_stay}
 

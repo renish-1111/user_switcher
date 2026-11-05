@@ -268,5 +268,6 @@ extend_bootinfo = "user_switcher.boot.extend_bootinfo"
 # ? AUDIT LOGS MUST NOT STOP A SWITCHED-INTO TEST USER FROM BEING DELETED
 ignore_links_on_delete = ["User Switch Log"]
 
-# Ends an impersonated session when the real user is disabled, loses System Manager or the switcher is turned off
-before_request = ["user_switcher.api.end_orphaned_session"]
+# Ends an impersonated session when the real user is disabled, loses System Manager or the switcher is turned off;
+# then deletes the sessions a switch replaced, once their grace period is over
+before_request = ["user_switcher.api.end_orphaned_session", "user_switcher.api.retire_previous_sessions"]
