@@ -392,10 +392,20 @@
 							<button class="us-filter active" data-type="">${t("All")}</button>
 							<button class="us-filter" data-type="System User">${t("System")}</button>
 							<button class="us-filter" data-type="Website User">${t("Website")}</button>
-							<label class="us-role-filter" title="${t("Filter by role")}">
-								${ICONS.filter}
-								<select aria-label="${t("Filter by role")}"><option value="">${t("All roles")}</option></select>
-							</label>
+							<div class="us-role-filter">
+								<button type="button" class="us-role-filter-btn" aria-haspopup="listbox" aria-expanded="false" title="${t("Filter by role")}">
+									${ICONS.filter}<span class="us-role-filter-label">${t("Role")}</span>
+								</button>
+								<button type="button" class="us-role-filter-clear" aria-label="${t("Clear role filter")}" title="${t("Clear role filter")}" hidden>${ICONS.close}</button>
+								<div class="us-role-pop" hidden>
+									<span class="us-role-pop-search">
+										${ICONS.search}
+										<input type="text" role="combobox" aria-expanded="true" aria-controls="us-role-options" aria-autocomplete="list"
+											placeholder="${t("Search roles")}" ${NO_AUTOFILL}>
+									</span>
+									<span class="us-combo-list" id="us-role-options" role="listbox"></span>
+								</div>
+							</div>
 						</div>
 						<div class="us-list" role="listbox"></div>
 					</div>
@@ -506,7 +516,11 @@
 		const $identity = $root.find(".us-identity");
 		const $search = $root.find(".us-search input");
 		const $create = $root.find(".us-create");
-		const $role_filter = $root.find(".us-role-filter select");
+		const $rf = $root.find(".us-role-filter");
+		const $rf_btn = $rf.find(".us-role-filter-btn");
+		const $rf_pop = $rf.find(".us-role-pop");
+		const $rf_input = $rf_pop.find("input");
+		const $rf_list = $rf_pop.find(".us-combo-list");
 		const state = { ctx: null, user_type: "", role: "", txt: "", request_id: 0, creating: false, info: false, editing: null, roles: null, picked: new Set(), access: null };
 		let search_timer;
 
@@ -525,7 +539,6 @@
 			$card.attr("aria-hidden", "false");
 			$trigger.attr("aria-expanded", "true");
 			fetch_users();
-			fetch_roles().then(paint_role_filter);
 			if (!state.creating && !state.access) setTimeout(() => $search.trigger("focus").trigger("select"), 60);
 		}
 
@@ -551,6 +564,7 @@
 		}
 
 		function close() {
+			open_role_pop(false);
 			state.info = false;
 			$root.removeClass("us-open us-info-mode").find(".us-info-btn").removeClass("is-on").attr("aria-pressed", false);
 			$card.attr("aria-hidden", "true");
@@ -575,6 +589,7 @@
 		$(document).on("click.user_switcher", (e) => {
 			// A click that re-rendered its own target (e.g. a right button) leaves it detached; that was inside
 			if (!e.target.isConnected) return;
+			if (!$(e.target).closest(".us-role-filter").length) open_role_pop(false);
 			if (is_open() && !$(e.target).closest("#us-floating-container").length) close();
 		});
 
@@ -642,16 +657,95 @@
 			$search.trigger("focus");
 		});
 
-		$role_filter.on("change", () => {
-			state.role = $role_filter.val();
-			$root.find(".us-role-filter").toggleClass("active", !!state.role);
+		// ---------- role filter: a searchable list under the filter button ----------
+
+		let rf_options = [];
+		let rf_active = 0;
+
+		function open_role_pop(open) {
+			if (open === !$rf_pop.prop("hidden")) return;
+			$rf_pop.prop("hidden", !open);
+			$rf_btn.attr("aria-expanded", String(open));
+			if (!open) return;
+			$rf_input.val("");
+			paint_role_options();
+			fetch_roles().then((roles) => {
+				rf_active = state.role ? roles.findIndex((r) => r.name === state.role) + 1 : 0;
+				paint_role_options();
+				$rf_list.find(".is-active")[0]?.scrollIntoView({ block: "nearest" });
+			});
+			setTimeout(() => $rf_input.trigger("focus"), 0);
+		}
+
+		function paint_role_options() {
+			if (!state.roles) return $rf_list.html(`<span class="us-combo-empty">${t("Loading roles...")}</span>`);
+			const q = $rf_input.val().trim();
+			rf_options = [...(q ? [] : [{ name: "" }]), ...search(state.roles, q, (r) => r.name)];
+			rf_active = Math.min(rf_active, rf_options.length - 1);
+			$rf_list.html(
+				rf_options.length
+					? rf_options
+							.map((r, i) => {
+								const picked = r.name === state.role;
+								return `<span class="us-combo-option ${i === rf_active ? "is-active" : ""} ${picked ? "is-picked" : ""}"
+									role="option" id="us-rf-${i}" aria-selected="${picked}" data-i="${i}">
+									<span class="us-combo-name">${r.name ? mark_match(r.name, q) : t("All roles")}</span>
+									${picked ? `<span class="us-combo-check">✓</span>` : ""}
+								</span>`;
+							})
+							.join("")
+					: `<span class="us-combo-empty">${t("No role matches “{0}”", [esc(q)])}</span>`
+			);
+			$rf_input.attr("aria-activedescendant", rf_active >= 0 ? `us-rf-${rf_active}` : null);
+		}
+
+		function pick_role(name) {
+			state.role = name;
+			$rf.toggleClass("active", !!name);
+			$rf.find(".us-role-filter-label").text(name || t("Role"));
+			$rf_btn.attr("title", name ? t("Role: {0}", [name]) : t("Filter by role"));
+			$rf.find(".us-role-filter-clear").prop("hidden", !name);
+			open_role_pop(false);
 			fetch_users();
+			$search.trigger("focus");
+		}
+
+		$rf_btn.on("click", () => open_role_pop($rf_pop.prop("hidden")));
+		$rf.find(".us-role-filter-clear").on("click", () => pick_role(""));
+
+		$rf_input.on("input", () => {
+			rf_active = 0;
+			paint_role_options();
 		});
 
-		function paint_role_filter() {
-			if ($role_filter.children().length > 1) return;
-			$role_filter.append(state.roles.map((r) => `<option value="${esc(r.name)}">${esc(r.name)}</option>`));
-		}
+		$rf_input.on("keydown", (e) => {
+			// Keep keys here: the list's 1-9 / arrow / Esc shortcuts must not fire while typing a role
+			e.stopPropagation();
+			if ((e.key === "ArrowDown" || e.key === "ArrowUp") && rf_options.length) {
+				e.preventDefault();
+				rf_active = (rf_active + (e.key === "ArrowDown" ? 1 : -1) + rf_options.length) % rf_options.length;
+				paint_role_options();
+				$rf_list.find(".is-active")[0]?.scrollIntoView({ block: "nearest" });
+			} else if (e.key === "Enter") {
+				e.preventDefault();
+				if (rf_options[rf_active]) pick_role(rf_options[rf_active].name);
+			} else if (e.key === "Escape" || e.key === "Tab") {
+				if (e.key === "Escape") e.preventDefault();
+				open_role_pop(false);
+				$rf_btn.trigger("focus");
+			}
+		});
+
+		$rf_list.on("mousedown", ".us-combo-option", function (e) {
+			e.preventDefault();
+			pick_role(rf_options[this.dataset.i].name);
+		});
+		$rf_list.on("mousemove", ".us-combo-option", function () {
+			if (rf_active === +this.dataset.i) return;
+			rf_active = +this.dataset.i;
+			$rf_list.find(".us-combo-option").removeClass("is-active");
+			$(this).addClass("is-active");
+		});
 
 		// ---------- drag to reorder pinned users ----------
 

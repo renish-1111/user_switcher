@@ -485,39 +485,19 @@
 	color: var(--us-accent-fg);
 }
 
+/* Role filter: pill button + searchable popover */
 #us-floating-container .us-role-filter {
 	position: relative;
 	display: flex;
 	align-items: center;
-	margin-left: auto;
+	min-width: 0;
 	max-width: 45%;
 	height: 28px;
+	margin-left: auto;
 	border-radius: 999px;
 	background: var(--us-hover);
 	color: var(--us-label);
-}
-
-#us-floating-container .us-role-filter svg {
-	position: absolute;
-	left: 10px;
-	width: 13px;
-	height: 13px;
-	pointer-events: none;
-}
-
-#us-floating-container .us-role-filter select {
-	appearance: none;
-	width: 100%;
-	height: 100%;
-	padding: 0 12px 0 28px;
-	border: 0;
-	border-radius: inherit;
-	background: transparent;
-	color: inherit;
-	font-size: 12px;
-	font-weight: 500;
-	text-overflow: ellipsis;
-	cursor: pointer;
+	transition: background 0.15s, color 0.15s;
 }
 
 #us-floating-container .us-role-filter:hover {
@@ -529,9 +509,131 @@
 	color: var(--us-accent-fg);
 }
 
-#us-floating-container .us-role-filter option {
+#us-floating-container .us-role-filter-btn {
+	display: flex;
+	align-items: center;
+	gap: 6px;
+	min-width: 0;
+	height: 100%;
+	padding: 0 12px;
+	border-radius: inherit;
+	background: transparent;
+	color: inherit;
+	font-size: 12px;
+	font-weight: 500;
+}
+
+#us-floating-container .us-role-filter.active .us-role-filter-btn {
+	padding-right: 4px;
+}
+
+#us-floating-container .us-role-filter-btn svg {
+	flex-shrink: 0;
+	width: 13px;
+	height: 13px;
+}
+
+#us-floating-container .us-role-filter-label {
+	overflow: hidden;
+	white-space: nowrap;
+	text-overflow: ellipsis;
+}
+
+#us-floating-container .us-role-filter-clear {
+	display: grid;
+	place-items: center;
+	flex-shrink: 0;
+	width: 20px;
+	height: 20px;
+	margin-right: 4px;
+	border-radius: 50%;
+	background: transparent;
+	color: inherit;
+	opacity: 0.8;
+}
+
+#us-floating-container .us-role-filter-clear:hover {
+	opacity: 1;
+	background: color-mix(in srgb, currentColor 20%, transparent);
+}
+
+#us-floating-container .us-role-filter-clear[hidden] {
+	display: none;
+}
+
+#us-floating-container .us-role-filter-clear svg {
+	width: 12px;
+	height: 12px;
+}
+
+#us-floating-container .us-role-pop {
+	position: absolute;
+	top: calc(100% + 6px);
+	right: 0;
+	z-index: 10;
+	display: flex;
+	flex-direction: column;
+	width: 260px;
+	max-width: calc(100vw - 60px);
+	padding: 6px;
+	border: 1px solid var(--us-border);
+	border-radius: 12px;
 	background: var(--us-bg);
+	box-shadow: var(--us-shadow);
 	color: var(--us-text);
+}
+
+#us-floating-container .us-role-pop[hidden] {
+	display: none;
+}
+
+#us-floating-container .us-role-pop-search {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	height: 34px;
+	margin-bottom: 4px;
+	padding: 0 10px;
+	border-radius: 8px;
+	background: var(--us-hover);
+	color: var(--us-muted);
+}
+
+#us-floating-container .us-role-pop-search svg {
+	flex-shrink: 0;
+	width: 14px;
+	height: 14px;
+}
+
+#us-floating-container .us-role-pop-search input {
+	flex: 1;
+	min-width: 0;
+	height: 100%;
+	padding: 0;
+	border: 0;
+	outline: none;
+	background: transparent;
+	color: var(--us-text);
+	font-size: 13px;
+	box-shadow: none;
+}
+
+#us-floating-container .us-role-pop .us-combo-list {
+	position: static;
+	max-height: 260px;
+	padding: 0;
+	border: 0;
+	box-shadow: none;
+}
+
+#us-floating-container .us-combo-option.is-picked .us-combo-name {
+	font-weight: 600;
+}
+
+#us-floating-container .us-combo-check {
+	flex-shrink: 0;
+	color: var(--us-accent);
+	font-weight: 600;
 }
 
 /* List */
