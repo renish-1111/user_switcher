@@ -9,6 +9,12 @@ from frappe.utils import cint, validate_email_address
 
 ALLOWED_ROLES = {"System Manager"}
 AUTOMATIC_ROLES = ["All", "Guest", "Administrator", "Desk User"]
+# Desk route views whose second part is a doctype (frappe.get_route())
+DOCTYPE_VIEWS = ("List", "Form", "Report", "Tree", "Image", "Kanban", "Calendar", "Gantt", "Dashboard", "Map")
+# ? DefaultValue PARENT HOLDING EACH USER'S ROLES FROM BEFORE THE SWITCHER FIRST CHANGED THEM
+ROLE_SNAPSHOTS = "__user_switcher_roles"
+# Test users carry this in their bio (see create_test_user)
+TEST_USER_MARK = "%User Switcher%"
 
 
 def _real_user() -> str:
@@ -33,6 +39,20 @@ def _escape_like(txt: str) -> str:
 	if not isinstance(txt, str):
 		txt = str(txt or "")
 	return txt.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+
+
+def _str_list(value) -> list[str]:
+	"""Parse a list (or its JSON, or one plain string) into stripped, non-empty strings."""
+	if isinstance(value, str):
+		try:
+			value = frappe.parse_json(value)
+		except Exception:
+			pass
+	if isinstance(value, str):
+		value = [value]
+	if not isinstance(value, (list, tuple, set)):
+		return []
+	return [str(v).strip() for v in value if isinstance(v, str | int) and str(v).strip()]
 
 
 def _match_rank(text: str, query: str) -> int:
@@ -159,7 +179,8 @@ def get_context(
 	user_type: str | None = None,
 	limit: int | str = 30,
 	cached: list | str | None = None,
-	role: str | None = None,
+	role: list | str | None = None,
+	role_match: str = "any",
 ):
 	"""Return switcher state and a filtered user list.
 
@@ -169,7 +190,8 @@ def get_context(
 		limit: Max users returned (capped at 100); 0 returns only the `allowed` flag.
 		cached: Optional user ids the browser has pinned or remembered; those that were deleted
 			or disabled come back in `stale` so the UI can forget them.
-		role: Optional role; only users holding it are returned.
+		role: Optional role, or list (or JSON list) of roles, to filter by.
+		role_match: "all" returns users holding every role in `role`; anything else, any of them.
 
 	Returns:
 		`{"allowed": False}` for unauthorised users (never throws), else the switcher state.
@@ -186,7 +208,7 @@ def get_context(
 	if not limit:
 		return {"allowed": True}
 
-	users = _find_users(real_user, txt, user_type, limit, role)
+	users = _find_users(real_user, txt, user_type, limit, _str_list(role), role_match == "all")
 
 	return {
 		"allowed": True,
@@ -223,8 +245,29 @@ def _stale_users(cached: list | str | None) -> list[str]:
 	return stale
 
 
+def _users_with_roles(roles: list[str], match_all: bool) -> list[str]:
+	"""Users holding any (or, with `match_all`, every) role in `roles`."""
+	# ponytail: loads every holder of these roles; fine up to a few thousand users
+	rows = frappe.get_all(
+		"Has Role",
+		filters={"parenttype": "User", "role": ["in", roles]},
+		fields=["parent", "role"],
+		ignore_permissions=True,
+	)
+	held = {}
+	for row in rows:
+		held.setdefault(row.parent, set()).add(row.role)
+	need = len(set(roles)) if match_all else 1
+	return [user for user, user_roles in held.items() if len(user_roles) >= need]
+
+
 def _find_users(
-	real_user: str, txt: str | None, user_type: str | None, limit: int, role: str | None = None
+	real_user: str,
+	txt: str | None,
+	user_type: str | None,
+	limit: int,
+	roles: list[str] | None = None,
+	match_all: bool = False,
 ) -> list[dict]:
 	exclude_users = {"Guest"}
 	if getattr(frappe.session, "user", None):
@@ -235,8 +278,8 @@ def _find_users(
 
 	if user_type in ("System User", "Website User"):
 		filters.append(["user_type", "=", user_type])
-	if role:
-		filters.append(["Has Role", "role", "=", role])
+	if roles:
+		filters.append(["name", "in", _users_with_roles(roles, match_all) or [""]])
 
 	or_filters = None
 	clean_txt = str(txt or "").strip()
@@ -307,15 +350,60 @@ def log_switch(real_user: str, target_user: str) -> None:
 	doc.insert(ignore_permissions=True)
 
 
+def _roles_allow(doctype: str, name: str, user: str) -> bool:
+	"""Whether `user` has one of the roles a Report/Page lists (no roles listed = open to all)."""
+	allowed = frappe.get_all(
+		"Has Role", filters={"parenttype": doctype, "parent": name}, pluck="role", ignore_permissions=True
+	)
+	return not allowed or bool(set(allowed) & set(frappe.get_roles(user)))
+
+
+def _can_open_route(route: list | str | None, user: str) -> bool:
+	"""Whether `user` may open the desk `route` (the parts of frappe.get_route()).
+
+	Args:
+		route: Route parts, e.g. `["Form", "Sales Invoice", "SINV-0001"]`, or their JSON. Empty means desk home.
+		user: The user to check for.
+
+	Returns:
+		False when the user has no desk access or lacks read (create, for a new form) on the route's
+		doctype, document, report or page; True for routes it can't judge, such as workspaces.
+	"""
+	parts = _str_list(route)
+	if not parts:
+		return True
+	if frappe.db.get_value("User", user, "user_type") != "System User":
+		return False
+	view, rest = parts[0], parts[1:]
+	try:
+		if view in DOCTYPE_VIEWS and rest:
+			doctype = rest[0]
+			if view == "Form" and len(rest) > 1:
+				if rest[1].startswith("new-"):
+					return frappe.has_permission(doctype, "create", user=user)
+				return frappe.has_permission(doctype, "read", doc=rest[1], user=user)
+			return frappe.has_permission(doctype, "read", user=user)
+		if view == "query-report" and rest:
+			return _roles_allow("Report", rest[0], user)
+		if frappe.db.exists("Page", view):
+			return _roles_allow("Page", view, user)
+	except Exception:
+		# A missing doctype/document counts as "can't open" rather than failing the switch
+		return False
+	return True
+
+
 @frappe.whitelist(methods=["POST"])
-def switch_to_user(target_user: str):
+def switch_to_user(target_user: str, route: list | str | None = None):
 	"""Start a new session as `target_user` and log it.
 
 	Args:
 		target_user: Id of an enabled User to switch into.
+		route: Optional desk route the browser is on (see `_can_open_route`).
 
 	Returns:
-		`{"current_user": target_user}`.
+		`{"current_user": target_user, "can_stay": bool}`; `can_stay` tells the browser whether
+		to reload the same page or start over from the desk home.
 
 	Raises:
 		frappe.PermissionError: Caller may not switch, or the target is blocked (see `_blocked_targets`).
@@ -342,7 +430,9 @@ def switch_to_user(target_user: str):
 		_deny(_("You are not permitted to switch into this user"), "switch", target_user)
 
 	if target_user == frappe.session.user:
-		return {"current_user": target_user}
+		return {"current_user": target_user, "can_stay": True}
+
+	can_stay = _can_open_route(route, target_user)
 
 	# ? LOG FIRST SO A FAILED AUDIT WRITE BLOCKS THE SWITCH INSTEAD OF LEAVING IT UNRECORDED
 	log_switch(real_user, target_user)
@@ -364,13 +454,13 @@ def switch_to_user(target_user: str):
 
 	delete_session(old_sid, reason="Switched user via User Switcher")
 
-	return {"current_user": target_user}
+	return {"current_user": target_user, "can_stay": can_stay}
 
 
 @frappe.whitelist(methods=["POST"])
-def switch_back():
-	"""Return to the user who originally logged in."""
-	return switch_to_user(_real_user())
+def switch_back(route: list | str | None = None):
+	"""Return to the user who originally logged in (see `switch_to_user` for `route`)."""
+	return switch_to_user(_real_user(), route)
 
 
 @frappe.whitelist()
@@ -448,17 +538,7 @@ def create_test_user(
 	if frappe.db.exists("User", email):
 		frappe.throw(_("User {0} already exists").format(email), frappe.DuplicateEntryError)
 
-	if isinstance(roles, str):
-		try:
-			roles = frappe.parse_json(roles)
-		except Exception:
-			roles = [roles]
-	if isinstance(roles, str):
-		roles = [roles]
-	elif not isinstance(roles, (list, tuple, set)):
-		roles = []
-
-	cleaned_roles = [str(r).strip() for r in roles if r and isinstance(r, str) and str(r).strip()]
+	cleaned_roles = _str_list(roles)
 	valid_roles = set(
 		frappe.get_all("Role", filters={"name": ["in", cleaned_roles or [""]], "disabled": 0}, pluck="name")
 	) - set(AUTOMATIC_ROLES)
@@ -546,24 +626,17 @@ def set_user_roles(user: str, roles: list | str | None = None):
 	real_user = _check_role_target(user)
 	canonical_user = frappe.db.get_value("User", str(user or "").strip(), "name") or user
 
-	if isinstance(roles, str):
-		try:
-			roles = frappe.parse_json(roles)
-		except Exception:
-			roles = [roles]
-	if isinstance(roles, str):
-		roles = [roles]
-	elif not isinstance(roles, (list, tuple, set)):
-		roles = []
-
-	cleaned_roles = [str(r).strip() for r in roles if r and isinstance(r, str) and str(r).strip()]
 	assignable = set(frappe.get_all("Role", filters={"disabled": 0}, pluck="name")) - set(AUTOMATIC_ROLES)
-	wanted = set(cleaned_roles) & assignable
+	wanted = set(_str_list(roles)) & assignable
 
 	doc = frappe.get_doc("User", canonical_user)
 	current = {d.role for d in doc.roles} & assignable
 	if canonical_user.casefold() == real_user.casefold() and "System Manager" in current - wanted:
 		frappe.throw(_("You cannot remove System Manager from your own account here"))
+
+	original = _role_snapshot(doc.name)
+	if original is None and wanted != current:
+		frappe.db.set_default(doc.name, frappe.as_json(sorted(current)), parent=ROLE_SNAPSHOTS)
 
 	doc.append_roles(*sorted(wanted - current))
 	doc.set("roles", [d for d in doc.roles if d.role not in current - wanted])
@@ -571,7 +644,46 @@ def set_user_roles(user: str, roles: list | str | None = None):
 	doc.flags.ignore_permissions = True
 	doc.save()
 
+	# Back to where it started: nothing left to undo
+	if original is not None and set(original) & assignable == wanted:
+		frappe.defaults.clear_default(key=doc.name, parent=ROLE_SNAPSHOTS)
+
 	return {"name": doc.name, "user_type": doc.user_type, "roles": sorted(wanted)}
+
+
+def _role_snapshot(user: str) -> list[str] | None:
+	"""The roles `user` had before the switcher first changed them, or None if it never did."""
+	value = frappe.db.get_default(user, parent=ROLE_SNAPSHOTS)
+	return frappe.parse_json(value) if value else None
+
+
+@frappe.whitelist()
+def get_role_snapshot(user: str) -> list[str] | None:
+	"""Roles `user` had before the switcher first changed them, or None if unchanged.
+
+	Raises:
+		frappe.PermissionError: Caller may not manage this user's roles.
+	"""
+	_check_role_target(user)
+	return _role_snapshot(frappe.db.get_value("User", str(user).strip(), "name"))
+
+
+@frappe.whitelist(methods=["POST"])
+def restore_user_roles(user: str):
+	"""Put `user`'s roles back to what they were before the switcher first changed them.
+
+	Returns:
+		The result of `set_user_roles`.
+
+	Raises:
+		frappe.PermissionError: Caller may not manage this user's roles.
+		frappe.ValidationError: No saved original roles for this user.
+	"""
+	_check_role_target(user)
+	original = _role_snapshot(frappe.db.get_value("User", str(user).strip(), "name"))
+	if original is None:
+		frappe.throw(_("No original roles saved for {0}").format(user))
+	return set_user_roles(user, original)
 
 
 # ---------- doctype access (role permissions) ----------
@@ -815,3 +927,312 @@ def set_doctype_access(doctype: str, changes: dict | str | None = None):
 
 	validate_permissions_for_doctype(doctype)
 	return get_doctype_access(doctype)
+
+
+# ---------- test users and changed roles (clean up) ----------
+
+
+def _test_users(real_user: str, names: list[str] | None = None) -> list[dict]:
+	"""Test users the caller may clean up: made by the switcher, not blocked, not the caller."""
+	filters = [
+		["bio", "like", TEST_USER_MARK],
+		["name", "not in", [*_blocked_targets(real_user), real_user, "Administrator", "Guest"]],
+	]
+	if names is not None:
+		filters.append(["name", "in", names or [""]])
+	return frappe.get_all(
+		"User",
+		filters=filters,
+		fields=[
+			"name",
+			"full_name",
+			"user_image",
+			"user_type",
+			"enabled",
+			"owner",
+			"creation",
+			"last_active",
+		],
+		order_by="creation desc",
+		limit=200,
+		ignore_permissions=True,
+	)
+
+
+@frappe.whitelist()
+def get_cleanup() -> dict:
+	"""Test users made with the switcher, and users whose roles the switcher changed.
+
+	Returns:
+		`{"test_users": [...], "changed_roles": [{"name", "full_name", "original", "current"}, ...]}`.
+		`test_users` rows also carry `roles`; both lists are capped at 200.
+
+	Raises:
+		frappe.PermissionError: Caller may not switch users.
+	"""
+	real_user = _real_user()
+	if not _can_switch(real_user):
+		_deny(_("Not permitted"), "cleanup")
+	real_user = frappe.db.get_value("User", real_user, "name") or real_user
+
+	test_users = _test_users(real_user)
+	_attach_roles(test_users)
+
+	snapshots = frappe.get_all(
+		"DefaultValue",
+		filters={"parent": ROLE_SNAPSHOTS},
+		fields=["defkey", "defvalue"],
+		limit=200,
+		ignore_permissions=True,
+	)
+	users = {
+		u.name: u
+		for u in frappe.get_all(
+			"User",
+			filters={"name": ["in", [s.defkey for s in snapshots] or [""]]},
+			fields=["name", "full_name", "user_image"],
+			ignore_permissions=True,
+		)
+	}
+	_attach_roles(list(users.values()))
+	changed = [
+		{
+			"name": s.defkey,
+			"full_name": users[s.defkey].full_name,
+			"user_image": users[s.defkey].user_image,
+			"original": frappe.parse_json(s.defvalue),
+			"current": users[s.defkey].roles,
+		}
+		for s in snapshots
+		if s.defkey in users
+	]
+	return {"test_users": test_users, "changed_roles": changed}
+
+
+@frappe.whitelist(methods=["POST"])
+def remove_test_users(users: list | str, action: str = "delete") -> dict:
+	"""Delete (or disable) test users made with the switcher.
+
+	Args:
+		users: User ids (or their JSON). Ids that are not the caller's removable test users are skipped.
+		action: "disable" only disables; "delete" deletes, and disables users whose records are still
+			linked from other documents (Frappe refuses to delete those).
+
+	Returns:
+		`{"deleted": [...], "disabled": [...], "skipped": [...]}`.
+
+	Raises:
+		frappe.PermissionError: Caller may not switch users.
+	"""
+	real_user = _real_user()
+	if not _can_switch(real_user):
+		_deny(_("Not permitted"), "remove_test_users")
+	real_user = frappe.db.get_value("User", real_user, "name") or real_user
+
+	names = _str_list(users)
+	removable = {u.name for u in _test_users(real_user, names)} - {frappe.session.user}
+	out = {"deleted": [], "disabled": [], "skipped": [n for n in names if n not in removable]}
+
+	def disable(name):
+		user = frappe.get_doc("User", name)
+		user.enabled = 0
+		# ? CLEAN-UP IS GATED BY _can_switch; WHILE SWITCHED THE SESSION USER MAY NOT BE ABLE TO WRITE USERS
+		user.flags.ignore_permissions = True
+		user.save()
+		out["disabled"].append(name)
+
+	for name in sorted(removable):
+		if action != "delete":
+			disable(name)
+			continue
+		frappe.db.savepoint("us_remove_user")
+		try:
+			frappe.delete_doc("User", name, ignore_permissions=True)
+			out["deleted"].append(name)
+			frappe.defaults.clear_default(key=name, parent=ROLE_SNAPSHOTS)
+		except frappe.LinkExistsError:
+			frappe.db.rollback(save_point="us_remove_user")
+			disable(name)
+
+	frappe.logger("user_switcher").info("removed test users: real_user=%s result=%s", real_user, out)
+	return out
+
+
+# ---------- why can't they open it? ----------
+
+
+@frappe.whitelist()
+def explain_access(doctype: str, docname: str | None = None, ptype: str = "read") -> dict:
+	"""Explain whether the user you are viewing as may `ptype` a doctype (or one document), and why.
+
+	Args:
+		doctype: The DocType to check.
+		docname: Optional document name; adds User Permission, sharing and owner checks.
+		ptype: One of `ACCESS_RIGHTS`; anything else is treated as "read".
+
+	Returns:
+		Dict with `user`, `doctype`, `docname`, `ptype`, `allowed`, `role_ok` (a role grants it),
+		`owner_only` (granted only on documents they created), `user_permission_ok` (User Permissions
+		let them see this document), `restrictions` (`[{"allow", "values"}]` of their User Permissions)
+		and `log` (Frappe's own step-by-step permission log).
+
+	Raises:
+		frappe.PermissionError: Caller may not switch users.
+		frappe.DoesNotExistError: The doctype or document does not exist.
+	"""
+	from frappe.core.doctype.user_permission.user_permission import get_user_permissions
+	from frappe.permissions import _pop_debug_log, get_role_permissions, has_user_permission
+
+	if not _can_switch():
+		_deny(_("Not permitted"), "explain_access", doctype)
+	doctype = str(doctype or "").strip()
+	if not doctype or not frappe.db.exists("DocType", doctype):
+		frappe.throw(_("DocType {0} not found").format(doctype), frappe.DoesNotExistError)
+	ptype = ptype if ptype in ACCESS_RIGHTS else "read"
+	user = frappe.session.user
+
+	doc = None
+	if docname:
+		if not frappe.db.exists(doctype, docname):
+			frappe.throw(_("{0} {1} not found").format(_(doctype), docname), frappe.DoesNotExistError)
+		doc = frappe.get_doc(doctype, docname)
+
+	_pop_debug_log()
+	allowed = frappe.has_permission(doctype, ptype, doc=doc, user=user, debug=True)
+	log = _pop_debug_log()
+
+	role_perms = get_role_permissions(frappe.get_meta(doctype), user=user)
+	restrictions = [
+		{"allow": allow, "values": sorted({row.get("doc") for row in rows})}
+		for allow, rows in sorted(get_user_permissions(user).items())
+	]
+	return {
+		"user": user,
+		"doctype": doctype,
+		"docname": docname,
+		"ptype": ptype,
+		"allowed": bool(allowed),
+		"role_ok": bool(role_perms.get(ptype)),
+		"owner_only": bool(role_perms.get("if_owner", {}).get(ptype)),
+		"user_permission_ok": has_user_permission(doc, user, ptype=ptype) if doc else True,
+		"restrictions": restrictions,
+		"log": log,
+	}
+
+
+# ---------- user permissions (limit a user to some records) ----------
+
+
+def _check_link_doctype(doctype: str):
+	"""Raise unless `doctype` can hold User Permission values; returns its meta."""
+	doctype = str(doctype or "").strip()
+	if not doctype or not frappe.db.exists("DocType", doctype):
+		frappe.throw(_("DocType {0} not found").format(doctype))
+	meta = frappe.get_meta(doctype)
+	if meta.istable or meta.issingle:
+		frappe.throw(_("{0} can't be used in a User Permission").format(doctype))
+	return meta
+
+
+@frappe.whitelist()
+def get_user_permission_list(user: str) -> list[dict]:
+	"""User Permissions of `user`, as `[{"name", "allow", "for_value", "is_default", "applicable_for", ...}]`.
+
+	Raises:
+		frappe.PermissionError: Caller may not manage this user.
+	"""
+	_check_role_target(user)
+	return frappe.get_all(
+		"User Permission",
+		filters={"user": frappe.db.get_value("User", str(user).strip(), "name")},
+		fields=["name", "allow", "for_value", "is_default", "apply_to_all_doctypes", "applicable_for"],
+		order_by="allow asc, for_value asc",
+		ignore_permissions=True,
+	)
+
+
+@frappe.whitelist(methods=["POST"])
+def add_user_permission(user: str, allow: str, for_value: str, is_default: int | str = 0) -> list[dict]:
+	"""Limit `user` to `for_value` of `allow` on every doctype (a User Permission).
+
+	Returns:
+		The user's User Permissions, as `get_user_permission_list` returns them.
+
+	Raises:
+		frappe.PermissionError: Caller may not manage this user.
+		frappe.ValidationError: Unknown doctype/value, or the same permission already exists.
+	"""
+	_check_role_target(user)
+	user = frappe.db.get_value("User", str(user).strip(), "name")
+	allow = _check_link_doctype(allow).name
+	for_value = str(for_value or "").strip()
+	if not for_value or not frappe.db.exists(allow, for_value):
+		frappe.throw(_("{0} {1} not found").format(_(allow), for_value))
+
+	doc = frappe.get_doc(
+		{
+			"doctype": "User Permission",
+			"user": user,
+			"allow": allow,
+			"for_value": for_value,
+			"apply_to_all_doctypes": 1,
+			"is_default": cint(is_default),
+		}
+	)
+	# ? GATED BY _can_switch; WHILE SWITCHED THE SESSION USER MAY NOT BE ABLE TO WRITE USER PERMISSIONS
+	doc.insert(ignore_permissions=True)
+	frappe.logger("user_switcher").info(
+		"user permission added: real_user=%s user=%s %s=%s", _real_user(), user, allow, for_value
+	)
+	return get_user_permission_list(user)
+
+
+@frappe.whitelist(methods=["POST"])
+def remove_user_permission(name: str) -> list[dict]:
+	"""Delete one User Permission.
+
+	Returns:
+		The remaining User Permissions of its user.
+
+	Raises:
+		frappe.PermissionError: Caller may not manage that user.
+	"""
+	user = frappe.db.get_value("User Permission", str(name or "").strip(), "user")
+	if not user:
+		frappe.throw(_("User Permission {0} not found").format(name))
+	_check_role_target(user)
+	frappe.delete_doc("User Permission", name, ignore_permissions=True)
+	frappe.logger("user_switcher").info("user permission removed: real_user=%s name=%s", _real_user(), name)
+	return get_user_permission_list(user)
+
+
+@frappe.whitelist()
+def search_link_values(doctype: str, txt: str | None = None) -> list[dict]:
+	"""Records of `doctype` matching `txt`, for picking a User Permission value.
+
+	Returns:
+		Up to 12 `{"value", "label"}` dicts; `label` is the title field when the doctype has one.
+
+	Raises:
+		frappe.PermissionError: Caller may not switch users.
+	"""
+	if not _can_switch():
+		_deny(_("Not permitted"), "search_link_values", doctype)
+	meta = _check_link_doctype(doctype)
+	title = meta.title_field if meta.title_field and meta.title_field != "name" else None
+	fields = ["name", *([title] if title else [])]
+	or_filters = None
+	clean = str(txt or "").strip()
+	if clean:
+		like = f"%{_escape_like(clean)}%"
+		or_filters = {f: ["like", like] for f in fields}
+	# ? THE VIEWED USER MAY NOT READ THIS DOCTYPE; PICKING THE VALUE TO GRANT IS THE POINT
+	rows = frappe.get_all(
+		meta.name,
+		or_filters=or_filters,
+		fields=fields,
+		order_by="modified desc",
+		limit=12,
+		ignore_permissions=True,
+	)
+	return [{"value": r.name, "label": r.get(title) if title else None} for r in rows]

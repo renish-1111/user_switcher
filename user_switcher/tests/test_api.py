@@ -106,11 +106,43 @@ class TestManageRoles(IntegrationTestCase):
 		)
 
 	def test_find_users_by_role(self):
-		user = self._user("us_role_filter@example.com", ["Newsletter Manager"])
-		names = [u.name for u in api._find_users("Administrator", None, None, 100, "Newsletter Manager")]
-		self.assertIn(user, names)
-		names = [u.name for u in api._find_users("Administrator", None, None, 100, "Website Manager")]
-		self.assertNotIn(user, names)
+		one = self._user("us_role_filter@example.com", ["Newsletter Manager"])
+		both = self._user("us_role_filter2@example.com", ["Newsletter Manager", "Website Manager"])
+
+		def find(roles, match_all=False):
+			return {u.name for u in api._find_users("Administrator", None, None, 100, roles, match_all)}
+
+		self.assertTrue({one, both} <= find(["Newsletter Manager"]))
+		self.assertNotIn(one, find(["Website Manager"]))
+		self.assertTrue({one, both} <= find(["Newsletter Manager", "Website Manager"]))
+		self.assertIn(both, find(["Newsletter Manager", "Website Manager"], match_all=True))
+		self.assertNotIn(one, find(["Newsletter Manager", "Website Manager"], match_all=True))
+
+	def test_role_snapshot_and_restore(self):
+		user = self._user("us_roles_snap@example.com", ["Website Manager"])
+		self.assertIsNone(api.get_role_snapshot(user))
+
+		api.set_user_roles(user, ["Newsletter Manager"])
+		api.set_user_roles(user, ["Newsletter Manager", "Website Manager"])
+		# The first original is kept, not overwritten by later edits
+		self.assertEqual(api.get_role_snapshot(user), ["Website Manager"])
+
+		api.restore_user_roles(user)
+		self.assertEqual(api.get_user_roles(user), ["Website Manager"])
+		self.assertIsNone(api.get_role_snapshot(user))
+		self.assertRaises(frappe.ValidationError, api.restore_user_roles, user)
+
+	def test_user_permissions(self):
+		user = self._user("us_uperm@example.com", ["Website Manager"])
+		rows = api.add_user_permission(user, "Role", "Website Manager")
+		self.assertEqual([(r.allow, r.for_value) for r in rows], [("Role", "Website Manager")])
+		self.assertRaises(frappe.ValidationError, api.add_user_permission, user, "Role", "No Such Role")
+		self.assertEqual(api.remove_user_permission(rows[0].name), [])
+
+	def test_search_link_values(self):
+		values = [r["value"] for r in api.search_link_values("Role", "newsl")]
+		self.assertIn("Newsletter Manager", values)
+		self.assertRaises(frappe.ValidationError, api.search_link_values, "Has Role")
 
 	def test_add_and_remove_roles(self):
 		user = self._user("us_roles_t@example.com", ["Website Manager"])
@@ -132,6 +164,64 @@ class TestManageRoles(IntegrationTestCase):
 			self.assertRaises(frappe.ValidationError, api.set_user_roles, user, ["Website Manager"])
 			api.set_user_roles(user, ["System Manager"])
 		self.assertEqual(api.get_user_roles(user), ["System Manager"])
+
+
+class TestTesterTools(IntegrationTestCase):
+	def setUp(self):
+		frappe.set_user("Administrator")
+		self.conf = patch.object(
+			frappe.local, "conf", frappe._dict(developer_mode=1, user_switcher_enabled=1)
+		)
+		self.conf.start()
+		self.addCleanup(self.conf.stop)
+
+	def _test_user(self, email, roles=()):
+		with patch.object(api, "switch_to_user"):
+			return api.create_test_user("Tool Tester", email, list(roles), switch=0)["name"]
+
+	def test_route_check(self):
+		desk = self._test_user("us_route_desk@example.com", ["Website Manager"])
+		portal = self._test_user("us_route_web@example.com")
+		self.assertTrue(api._can_open_route(None, portal))
+		self.assertFalse(api._can_open_route(["List", "ToDo"], portal))
+		self.assertTrue(api._can_open_route('["List", "ToDo", "List"]', desk))
+		self.assertFalse(api._can_open_route(["List", "Role"], desk))
+		self.assertFalse(api._can_open_route(["Form", "ToDo", "no-such-todo"], desk))
+		self.assertTrue(api._can_open_route(["Workspaces", "Home"], desk))
+
+	def test_cleanup_lists_and_removes_test_users(self):
+		keep = self._test_user("us_clean_keep@example.com", ["Website Manager"])
+		gone = self._test_user("us_clean_gone@example.com", ["Website Manager"])
+		names = {u.name for u in api.get_cleanup()["test_users"]}
+		self.assertTrue({keep, gone} <= names)
+
+		out = api.remove_test_users([gone, "Administrator"], "delete")
+		self.assertEqual(out["deleted"], [gone])
+		self.assertEqual(out["skipped"], ["Administrator"])
+		self.assertFalse(frappe.db.exists("User", gone))
+
+		out = api.remove_test_users([keep], "disable")
+		self.assertEqual(out["disabled"], [keep])
+		self.assertEqual(frappe.db.get_value("User", keep, "enabled"), 0)
+
+	def test_cleanup_lists_changed_roles(self):
+		user = self._test_user("us_clean_roles@example.com", ["Website Manager"])
+		api.set_user_roles(user, ["Newsletter Manager"])
+		row = next(r for r in api.get_cleanup()["changed_roles"] if r["name"] == user)
+		self.assertEqual((row["original"], row["current"]), (["Website Manager"], ["Newsletter Manager"]))
+
+	def test_explain_access(self):
+		user = self._test_user("us_explain@example.com", ["Website Manager"])
+		frappe.set_user(user)
+		try:
+			with patch.object(api, "_real_user", return_value="Administrator"):
+				out = api.explain_access("Role")
+				self.assertFalse(out["allowed"])
+				self.assertFalse(out["role_ok"])
+				self.assertTrue(out["log"])
+				self.assertTrue(api.explain_access("ToDo")["allowed"])
+		finally:
+			frappe.set_user("Administrator")
 
 
 class TestSwitchHardening(IntegrationTestCase):
