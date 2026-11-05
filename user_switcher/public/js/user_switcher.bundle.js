@@ -516,7 +516,7 @@
 			${item("shield", t("Manage roles"), t("Click Manage roles to give or remove roles (access) for the user you are viewing as. Tick the roles, then press Save roles. The first roles a user had are kept, so Restore original puts them back."))}
 			${item("sliders", t("User permissions"), t("Click User permissions to limit the user you are viewing as to some records, for example one Company. Pick a doctype and a value, then press Add."))}
 			${item("key", t("Doctype access"), t("Click Doctype access to choose which roles can read, write, create or submit a doctype. The roles of the user you are viewing as come first, so one click gives them what they are missing. When a page says Not permitted while you are switched, use Fix access in the message."))}
-			${item("help", t("Why can't they open it?"), t("When a page says Not permitted, click Why? in the message. It shows which rule stops them: no role, User Permissions, or only their own documents. You can also open it from Doctype access."))}
+			${item("help", t("Why can't they open it?"), t("When a page says Not permitted, click Why? in the message. It shows which rule stops them: no role, User Permissions, or only their own documents."))}
 			${item("plus", t("Create a test user"), t("Click New test user, type a name, then tick the roles or pick a role profile to tick its roles at once. You can switch into the new user right away."))}
 			${item("trash", t("Clean up"), t("Click Clean up to delete or disable test users, and to undo role changes made with the switcher."))}
 			${item("clock", t("Auto switch back"), t("Click Auto back in the yellow bar to return to your own account after 15, 30 or 60 minutes. Click again to change or turn it off. When you switch, you stay on the same page if the other user may open it."))}
@@ -1712,10 +1712,7 @@
 			const cannot = shown_rights.filter((right) => !can.includes(right));
 			const pills = (rights, cls) => rights.map((r) => `<span class="us-access-pill ${cls}">${RIGHT_LABELS[r]}</span>`).join("");
 			$summary.html(`
-				<div class="us-access-summary-title">
-					<span>${t("What {0} can do", [`<b>${esc(display_name(me))}</b>`])}</span>
-					<button type="button" class="us-link us-access-why">${ICONS.help}${t("Why? Check a document")}</button>
-				</div>
+				<div class="us-access-summary-title">${t("What {0} can do", [`<b>${esc(display_name(me))}</b>`])}</div>
 				<div class="us-access-summary-row">
 					<span class="us-access-summary-label">${t("Allowed")}</span>
 					<span class="us-access-pills">${can.length ? pills(can, "is-yes") : `<span class="us-access-none">${t("Nothing yet")}</span>`}</span>
@@ -1799,14 +1796,6 @@
 			else $access_roles.find(".us-right").first().trigger("focus");
 		});
 		$access_more.on("change", paint_access);
-		$access.on("click", ".us-access-why", () => {
-			if (has_access_edits()) {
-				frappe.show_alert?.({ message: t("Save or cancel your changes first"), indicator: "orange" });
-				return;
-			}
-			const doctype = state.access.data.doctype;
-			show_panel("why", { doctype, docname: route_docname(doctype) });
-		});
 
 		// Role Permission Manager is for System Managers only. While switched into someone without that
 		// role the page would say Not permitted, so go back to your own account first and open it there.

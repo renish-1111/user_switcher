@@ -1578,10 +1578,6 @@
 }
 
 #us-floating-container .us-access-summary-title {
-	display: flex;
-	align-items: center;
-	justify-content: space-between;
-	gap: 8px;
 	font-weight: 500;
 }
 
@@ -1907,25 +1903,6 @@
 	background: var(--us-bg);
 	color: var(--us-text);
 	box-shadow: 0 1px 2px rgba(16, 24, 40, 0.12);
-}
-
-#us-floating-container .us-link {
-	display: inline-flex;
-	align-items: center;
-	gap: 4px;
-	padding: 0;
-	font-size: 12px;
-	font-weight: 500;
-	color: var(--us-info);
-}
-
-#us-floating-container .us-link:hover {
-	text-decoration: underline;
-}
-
-#us-floating-container .us-link svg {
-	width: 14px;
-	height: 14px;
 }
 
 #us-floating-container .us-btn--danger {
