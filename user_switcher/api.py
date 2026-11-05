@@ -1,6 +1,7 @@
 # * user_switcher/api.py
 
 import re
+from collections import Counter
 
 import frappe
 from frappe import _
@@ -13,6 +14,20 @@ AUTOMATIC_ROLES = ["All", "Guest", "Administrator", "Desk User"]
 DOCTYPE_VIEWS = ("List", "Form", "Report", "Tree", "Image", "Kanban", "Calendar", "Gantt", "Dashboard", "Map")
 # ? DefaultValue PARENT HOLDING EACH USER'S ROLES FROM BEFORE THE SWITCHER FIRST CHANGED THEM
 ROLE_SNAPSHOTS = "__user_switcher_roles"
+# Offered in the User permissions screen before anything is typed (after the ones the site already uses)
+COMMON_PERMISSION_DOCTYPES = (
+	"Company",
+	"Employee",
+	"Department",
+	"Branch",
+	"Designation",
+	"Cost Center",
+	"Project",
+	"Warehouse",
+	"Territory",
+	"Customer",
+	"Supplier",
+)
 # Test users carry this in their bio (see create_test_user)
 TEST_USER_MARK = "%User Switcher%"
 # Session data key holding the sessions a switch replaced, and how long they stay usable
@@ -794,17 +809,27 @@ def _level_zero_rules(doctype: str) -> list[dict]:
 
 
 @frappe.whitelist()
-def search_doctypes(txt: str | None = None) -> list[dict]:
+def search_doctypes(txt: str | None = None, for_user_permission: int | str = 0) -> list[dict]:
 	"""DocTypes whose access can be managed, matching `txt` the way Frappe's search bar does.
+
+	Args:
+		txt: Search text; empty lists the best suggestions.
+		for_user_permission: Truthy to search doctypes a User Permission can point at (no singles),
+			suggesting the ones already used for User Permissions, then common ones, before anything is typed.
 
 	Returns:
 		Up to 12 `{"name", "module"}` dicts, best match first (see `_match_rank`), then shortest name.
 	"""
 	if not _can_switch():
 		_deny(_("Not permitted"), "search_doctypes")
+	filters = [["istable", "=", 0], ["name", "not in", BLOCKED_DOCTYPES]]
+	if cint(for_user_permission):
+		filters.append(["issingle", "=", 0])
+		if not str(txt or "").strip():
+			return _suggested_permission_doctypes()
 	rows = frappe.get_all(
 		"DocType",
-		filters=[["istable", "=", 0], ["name", "not in", BLOCKED_DOCTYPES]],
+		filters=filters,
 		fields=["name", "module"],
 		order_by="name asc",
 		ignore_permissions=True,
@@ -814,6 +839,23 @@ def search_doctypes(txt: str | None = None) -> list[dict]:
 	ranked = [(rank, row) for rank, row in ranked if rank]
 	ranked.sort(key=lambda x: (x[0], len(x[1].name), x[1].name))
 	return [row for _rank, row in ranked[:12]]
+
+
+def _suggested_permission_doctypes() -> list[dict]:
+	"""Doctypes this site already limits users by (most used first), then the usual ones."""
+	used = Counter(frappe.get_all("User Permission", pluck="allow", limit=5000, ignore_permissions=True))
+	names = [d for d, _count in used.most_common()]
+	names += [d for d in COMMON_PERMISSION_DOCTYPES if d not in used]
+	found = {
+		row.name: row
+		for row in frappe.get_all(
+			"DocType",
+			filters={"name": ["in", names], "istable": 0, "issingle": 0},
+			fields=["name", "module"],
+			ignore_permissions=True,
+		)
+	}
+	return [found[n] for n in names if n in found][:12]
 
 
 @frappe.whitelist()

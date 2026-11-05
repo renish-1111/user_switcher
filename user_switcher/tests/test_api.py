@@ -147,6 +147,16 @@ class TestManageRoles(IntegrationTestCase):
 		self.assertRaises(frappe.ValidationError, api.add_user_permission, user, "Role", "No Such Role")
 		self.assertEqual(api.remove_user_permission(rows[0].name), [])
 
+	def test_user_permission_doctype_suggestions(self):
+		user = self._user("us_uperm_suggest@example.com", ["Website Manager"])
+		api.add_user_permission(user, "Role", "Website Manager")
+		suggested = [d.name for d in api.search_doctypes(for_user_permission=1)]
+		# Doctypes already used in User Permissions come first, then the usual ones
+		self.assertIn("Role", suggested)
+		self.assertIn("Company", suggested)
+		found = [d.name for d in api.search_doctypes("system settings", for_user_permission=1)]
+		self.assertNotIn("System Settings", found)
+
 	def test_search_link_values(self):
 		values = [r["value"] for r in api.search_link_values("Role", "newsl")]
 		self.assertIn("Newsletter Manager", values)

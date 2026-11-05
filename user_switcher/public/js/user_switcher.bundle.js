@@ -2010,7 +2010,8 @@
 			const me = viewed();
 			const add = { allow: "" };
 			let changed = false;
-			panel_head(t("User permissions"), t("Limit {0} to some records, e.g. one Company. Changes save right away.", [display_name(me)]));
+			let taken = new Set(); // "allow\nvalue" already added, left out of the value list
+			panel_head(t("User permissions"), t("Limit {0} to some records, e.g. one Company. Pick a doctype, then click a value to add it.", [display_name(me)]));
 			$panel_body.html(`
 				<div class="us-perm-add">
 					${combo_field("us-perm-allow", t("Limit to a"), t("DocType, e.g. Company"))}
@@ -2031,7 +2032,11 @@
 			const can_save = () => $save.prop("disabled", !add.allow || !$value.val().trim());
 
 			combo($allow, $allow.next(), {
-				fetch: find_doctypes,
+				// Before typing: the doctypes this site already limits users by, then Company, Employee, ...
+				fetch: (q) =>
+					frappe
+						.call({ method: `${API}.search_doctypes`, args: { txt: q, for_user_permission: 1 }, type: "GET" })
+						.then((r) => r.message || []),
 				label: doctype_label,
 				pick(d) {
 					add.allow = d.name;
@@ -2046,36 +2051,36 @@
 				can_save();
 			});
 			combo($value, $value.next(), {
-				fetch: (q) => find_values(add.allow, q),
+				fetch: (q) => find_values(add.allow, q).then((list) => list.filter((v) => !taken.has(`${add.allow}\n${v.value}`))),
 				label: value_label,
-				pick(v) {
-					$value.val(v.value);
-					can_save();
-					$save.trigger("focus");
-				},
+				// Picking a value adds it straight away; Add is for a value typed in full
+				pick: (v) => add_value(v.value),
 			});
 			$value.on("input", can_save);
 			$value.on("keydown", (e) => e.key === "Enter" && !e.combo_picked && !$save.prop("disabled") && $save.trigger("click"));
+			$save.on("click", () => add_value($value.val().trim()));
 
-			$save.on("click", () => {
+			function add_value(for_value) {
 				$save.prop("disabled", true);
+				$value.val(for_value);
 				frappe
 					.call({
 						method: `${API}.add_user_permission`,
 						args: {
 							user: me.name,
 							allow: add.allow,
-							for_value: $value.val().trim(),
+							for_value,
 							is_default: $panel_body.find(".us-perm-default input").prop("checked") ? 1 : 0,
 						},
 						type: "POST",
 					})
 					.then((r) => {
-						$value.val("").trigger("focus");
 						paint_list(r.message, true);
+						// Ready for the next value of the same doctype, with the list open again
+						$value.val("").trigger("focus").trigger("input");
 					})
 					.catch(can_save);
-			});
+			}
 
 			$list.on("click", ".us-perm-remove", function () {
 				this.disabled = true;
@@ -2088,6 +2093,7 @@
 
 			function paint_list(rows, now_changed) {
 				changed = changed || !!now_changed;
+				taken = new Set(rows.map((r) => `${r.allow}\n${r.for_value}`));
 				$panel_actions.find(".us-perm-reload").prop("hidden", !changed);
 				if (!rows.length) {
 					$list.html(empty_state(t("No limits yet. {0} sees every record their roles allow.", [esc(display_name(me))])));
