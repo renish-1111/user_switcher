@@ -37,6 +37,7 @@
 		key: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="8" cy="15" r="4"/><path d="m10.8 12.2 9.2-9.2"/><path d="m17 6 3 3"/><path d="m14 9 2 2"/></svg>`,
 		lock: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="11" width="16" height="10" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/></svg>`,
 		user_plus: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="10" cy="8" r="4"/><path d="M2 21a8 8 0 0 1 16 0M19 8v6M16 11h6"/></svg>`,
+		filter: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 5h18l-7 8.5V19l-4 2v-7.5z"/></svg>`,
 		eye: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12z"/><circle cx="12" cy="12" r="3"/></svg>`,
 	};
 
@@ -391,6 +392,10 @@
 							<button class="us-filter active" data-type="">${t("All")}</button>
 							<button class="us-filter" data-type="System User">${t("System")}</button>
 							<button class="us-filter" data-type="Website User">${t("Website")}</button>
+							<label class="us-role-filter" title="${t("Filter by role")}">
+								${ICONS.filter}
+								<select aria-label="${t("Filter by role")}"><option value="">${t("All roles")}</option></select>
+							</label>
 						</div>
 						<div class="us-list" role="listbox"></div>
 					</div>
@@ -501,7 +506,8 @@
 		const $identity = $root.find(".us-identity");
 		const $search = $root.find(".us-search input");
 		const $create = $root.find(".us-create");
-		const state = { ctx: null, user_type: "", txt: "", request_id: 0, creating: false, info: false, editing: null, roles: null, picked: new Set(), access: null };
+		const $role_filter = $root.find(".us-role-filter select");
+		const state = { ctx: null, user_type: "", role: "", txt: "", request_id: 0, creating: false, info: false, editing: null, roles: null, picked: new Set(), access: null };
 		let search_timer;
 
 		if (storage(sessionStorage, HIDDEN_KEY) === "1") $root.addClass("us-hidden");
@@ -519,6 +525,7 @@
 			$card.attr("aria-hidden", "false");
 			$trigger.attr("aria-expanded", "true");
 			fetch_users();
+			fetch_roles().then(paint_role_filter);
 			if (!state.creating && !state.access) setTimeout(() => $search.trigger("focus").trigger("select"), 60);
 		}
 
@@ -635,6 +642,17 @@
 			$search.trigger("focus");
 		});
 
+		$role_filter.on("change", () => {
+			state.role = $role_filter.val();
+			$root.find(".us-role-filter").toggleClass("active", !!state.role);
+			fetch_users();
+		});
+
+		function paint_role_filter() {
+			if ($role_filter.children().length > 1) return;
+			$role_filter.append(state.roles.map((r) => `<option value="${esc(r.name)}">${esc(r.name)}</option>`));
+		}
+
 		// ---------- drag to reorder pinned users ----------
 
 		// Rows swap live while you drag: note where every pinned row is (FLIP), move the dragged row
@@ -723,7 +741,7 @@
 			return frappe
 				.call({
 					method: `${API}.get_context`,
-					args: { txt: state.txt, user_type: state.user_type, cached: JSON.stringify(store.cached_names()) },
+					args: { txt: state.txt, user_type: state.user_type, role: state.role, cached: JSON.stringify(store.cached_names()) },
 					type: "GET",
 				})
 				.then((r) => {
@@ -791,7 +809,8 @@
 			// Cached entries may be stale; prefer the live row where the server returned one
 			const live = Object.fromEntries(ctx.users.map((u) => [u.name, u]));
 			const fresh = (u) => live[u.name] || u;
-			const matches_type = (u) => !state.user_type || u.user_type === state.user_type;
+			const matches_type = (u) =>
+				(!state.user_type || u.user_type === state.user_type) && (!state.role || (u.roles || []).includes(state.role));
 
 			let pinned = [];
 			let most_used = [];
@@ -1032,12 +1051,13 @@
 			}
 		});
 
+		function fetch_roles() {
+			if (state.roles) return Promise.resolve(state.roles);
+			return frappe.call({ method: `${API}.get_assignable_roles`, type: "GET" }).then((r) => (state.roles = r.message || []));
+		}
+
 		function load_roles() {
-			if (state.roles) return paint_roles();
-			frappe.call({ method: `${API}.get_assignable_roles`, type: "GET" }).then((r) => {
-				state.roles = r.message || [];
-				paint_roles();
-			});
+			fetch_roles().then(paint_roles);
 		}
 
 		function paint_roles() {

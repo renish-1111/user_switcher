@@ -105,6 +105,13 @@ class TestManageRoles(IntegrationTestCase):
 			.name
 		)
 
+	def test_find_users_by_role(self):
+		user = self._user("us_role_filter@example.com", ["Newsletter Manager"])
+		names = [u.name for u in api._find_users("Administrator", None, None, 100, "Newsletter Manager")]
+		self.assertIn(user, names)
+		names = [u.name for u in api._find_users("Administrator", None, None, 100, "Website Manager")]
+		self.assertNotIn(user, names)
+
 	def test_add_and_remove_roles(self):
 		user = self._user("us_roles_t@example.com", ["Website Manager"])
 		self.assertEqual(api.get_user_roles(user), ["Website Manager"])

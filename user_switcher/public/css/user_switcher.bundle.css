@@ -485,6 +485,55 @@
 	color: var(--us-accent-fg);
 }
 
+#us-floating-container .us-role-filter {
+	position: relative;
+	display: flex;
+	align-items: center;
+	margin-left: auto;
+	max-width: 45%;
+	height: 28px;
+	border-radius: 999px;
+	background: var(--us-hover);
+	color: var(--us-label);
+}
+
+#us-floating-container .us-role-filter svg {
+	position: absolute;
+	left: 10px;
+	width: 13px;
+	height: 13px;
+	pointer-events: none;
+}
+
+#us-floating-container .us-role-filter select {
+	appearance: none;
+	width: 100%;
+	height: 100%;
+	padding: 0 12px 0 28px;
+	border: 0;
+	border-radius: inherit;
+	background: transparent;
+	color: inherit;
+	font-size: 12px;
+	font-weight: 500;
+	text-overflow: ellipsis;
+	cursor: pointer;
+}
+
+#us-floating-container .us-role-filter:hover {
+	color: var(--us-text);
+}
+
+#us-floating-container .us-role-filter.active {
+	background: var(--us-accent);
+	color: var(--us-accent-fg);
+}
+
+#us-floating-container .us-role-filter option {
+	background: var(--us-bg);
+	color: var(--us-text);
+}
+
 /* List */
 #us-floating-container .us-list {
 	position: relative; /* rows' offsetTop is measured against the list while dragging */

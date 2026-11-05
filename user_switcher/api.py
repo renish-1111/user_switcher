@@ -159,6 +159,7 @@ def get_context(
 	user_type: str | None = None,
 	limit: int | str = 30,
 	cached: list | str | None = None,
+	role: str | None = None,
 ):
 	"""Return switcher state and a filtered user list.
 
@@ -168,6 +169,7 @@ def get_context(
 		limit: Max users returned (capped at 100); 0 returns only the `allowed` flag.
 		cached: Optional user ids the browser has pinned or remembered; those that were deleted
 			or disabled come back in `stale` so the UI can forget them.
+		role: Optional role; only users holding it are returned.
 
 	Returns:
 		`{"allowed": False}` for unauthorised users (never throws), else the switcher state.
@@ -184,7 +186,7 @@ def get_context(
 	if not limit:
 		return {"allowed": True}
 
-	users = _find_users(real_user, txt, user_type, limit)
+	users = _find_users(real_user, txt, user_type, limit, role)
 
 	return {
 		"allowed": True,
@@ -221,16 +223,20 @@ def _stale_users(cached: list | str | None) -> list[str]:
 	return stale
 
 
-def _find_users(real_user: str, txt: str | None, user_type: str | None, limit: int) -> list[dict]:
+def _find_users(
+	real_user: str, txt: str | None, user_type: str | None, limit: int, role: str | None = None
+) -> list[dict]:
 	exclude_users = {"Guest"}
 	if getattr(frappe.session, "user", None):
 		exclude_users.add(frappe.session.user)
 	exclude_users.update(_blocked_targets(real_user))
 
-	filters = {"enabled": 1, "name": ["not in", list(exclude_users)]}
+	filters = [["enabled", "=", 1], ["name", "not in", list(exclude_users)]]
 
 	if user_type in ("System User", "Website User"):
-		filters["user_type"] = user_type
+		filters.append(["user_type", "=", user_type])
+	if role:
+		filters.append(["Has Role", "role", "=", role])
 
 	or_filters = None
 	clean_txt = str(txt or "").strip()
