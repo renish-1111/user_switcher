@@ -1581,8 +1581,12 @@
 			load_access(name);
 		}
 
-		// Linked suggestions say which field links there; the page's own doctype comes first
-		const dt_meta = (d) => d.hint || (d.hint === "" && d.name === route_doctype() ? t("This page") : d.module || "");
+		// Linked suggestions name the field that links there when it says more than the doctype name;
+		// the page's own doctype comes first
+		const dt_meta = (d) => {
+			if (d.hint === "" && d.name === route_doctype()) return t("This page");
+			return d.hint && d.hint !== d.name ? d.hint : d.module || "";
+		};
 
 		// Nothing typed: the page's doctype (or the loaded one) and the doctypes its fields link to
 		function load_dt(q, wait) {
