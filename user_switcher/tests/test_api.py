@@ -204,6 +204,10 @@ class TestTesterTools(IntegrationTestCase):
 		self.assertEqual(out["disabled"], [keep])
 		self.assertEqual(frappe.db.get_value("User", keep, "enabled"), 0)
 
+		out = api.remove_test_users([keep], "enable")
+		self.assertEqual(out["enabled"], [keep])
+		self.assertEqual(frappe.db.get_value("User", keep, "enabled"), 1)
+
 	def test_cleanup_lists_changed_roles(self):
 		user = self._test_user("us_clean_roles@example.com", ["Website Manager"])
 		api.set_user_roles(user, ["Newsletter Manager"])

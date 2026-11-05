@@ -2110,20 +2110,26 @@
 
 		function paint_cleanup() {
 			const picked = new Set();
+			let enabled = {}; // user -> 1 | 0, to offer only the switch that changes something
 			panel_head(t("Clean up"), t("Remove test users and undo role changes made with User Switcher."));
 			$panel_body.html(empty_state(t("Loading...")));
 			$panel_actions.html(`
 				<span class="us-form-status us-clean-status"></span>
+				<button type="button" class="us-btn us-clean-enable" disabled>${t("Enable")}</button>
 				<button type="button" class="us-btn us-clean-disable" disabled>${t("Disable")}</button>
 				<button type="button" class="us-btn us-btn--danger us-clean-delete" disabled>${t("Delete")}</button>
 			`);
 			const paint_picked = () => {
-				$panel_actions.find(".us-clean-status").text(picked.size ? t("{0} selected", [picked.size]) : t("Tick test users to remove them"));
-				$panel_actions.find(".us-clean-disable, .us-clean-delete").prop("disabled", !picked.size);
+				const users = [...picked];
+				$panel_actions.find(".us-clean-status").text(picked.size ? t("{0} selected", [picked.size]) : t("Tick test users to manage them"));
+				$panel_actions.find(".us-clean-enable").prop("disabled", !users.some((u) => !enabled[u]));
+				$panel_actions.find(".us-clean-disable").prop("disabled", !users.some((u) => enabled[u]));
+				$panel_actions.find(".us-clean-delete").prop("disabled", !picked.size);
 			};
 
 			function paint(data) {
 				picked.clear();
+				enabled = Object.fromEntries(data.test_users.map((u) => [u.name, u.enabled]));
 				const user_text = (u) => `<span class="us-item-text">
 					<span class="us-item-name"><span class="us-item-name-text">${esc(display_name(u))}</span>
 						${u.enabled === 0 ? `<span class="us-chip">${t("Disabled")}</span>` : ""}</span>
@@ -2194,6 +2200,7 @@
 								message: [
 									out.deleted.length && t("Deleted {0}", [out.deleted.length]),
 									out.disabled.length && t("Disabled {0}", [out.disabled.length]),
+									out.enabled.length && t("Enabled {0}", [out.enabled.length]),
 									out.skipped.length && t("Skipped {0}", [out.skipped.length]),
 								].filter(Boolean).join(" · "),
 								indicator: "green",
@@ -2203,10 +2210,11 @@
 						})
 						.catch(paint_picked);
 				};
-				if (action === "disable") return go();
+				if (action !== "delete") return go();
 				ask(t("Delete {0} test users? Users still linked from other records are disabled instead.", [users.length]), go);
 			}
 
+			$panel_actions.find(".us-clean-enable").on("click", () => remove("enable"));
 			$panel_actions.find(".us-clean-disable").on("click", () => remove("disable"));
 			$panel_actions.find(".us-clean-delete").on("click", () => remove("delete"));
 

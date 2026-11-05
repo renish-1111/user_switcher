@@ -1011,15 +1011,15 @@ def get_cleanup() -> dict:
 
 @frappe.whitelist(methods=["POST"])
 def remove_test_users(users: list | str, action: str = "delete") -> dict:
-	"""Delete (or disable) test users made with the switcher.
+	"""Delete, disable or enable test users made with the switcher.
 
 	Args:
 		users: User ids (or their JSON). Ids that are not the caller's removable test users are skipped.
-		action: "disable" only disables; "delete" deletes, and disables users whose records are still
-			linked from other documents (Frappe refuses to delete those).
+		action: "enable" or "disable" only flips `enabled`; "delete" deletes, and disables users whose
+			records are still linked from other documents (Frappe refuses to delete those).
 
 	Returns:
-		`{"deleted": [...], "disabled": [...], "skipped": [...]}`.
+		`{"deleted": [...], "disabled": [...], "enabled": [...], "skipped": [...]}`.
 
 	Raises:
 		frappe.PermissionError: Caller may not switch users.
@@ -1031,19 +1031,22 @@ def remove_test_users(users: list | str, action: str = "delete") -> dict:
 
 	names = _str_list(users)
 	removable = {u.name for u in _test_users(real_user, names)} - {frappe.session.user}
-	out = {"deleted": [], "disabled": [], "skipped": [n for n in names if n not in removable]}
+	out = {"deleted": [], "disabled": [], "enabled": [], "skipped": [n for n in names if n not in removable]}
 
-	def disable(name):
+	def set_enabled(name, on):
 		user = frappe.get_doc("User", name)
-		user.enabled = 0
+		user.enabled = int(on)
 		# ? CLEAN-UP IS GATED BY _can_switch; WHILE SWITCHED THE SESSION USER MAY NOT BE ABLE TO WRITE USERS
 		user.flags.ignore_permissions = True
 		user.save()
-		out["disabled"].append(name)
+		out["enabled" if on else "disabled"].append(name)
+
+	def disable(name):
+		set_enabled(name, False)
 
 	for name in sorted(removable):
 		if action != "delete":
-			disable(name)
+			set_enabled(name, action == "enable")
 			continue
 		frappe.db.savepoint("us_remove_user")
 		try:
