@@ -1561,10 +1561,13 @@
 
 		function paint_dt_list(q) {
 			const mark = (name) => mark_match(name, q);
+			// Linked suggestions are grouped by where the link is: the doctype's own fields, then each child table
+			const header = (d, i) =>
+				d.group && d.group !== dt_options[i - 1]?.group ? `<span class="us-group" role="presentation">${esc(d.group)}</span>` : "";
 			$dt_list.html(
 				dt_options.length
 					? dt_options
-							.map((d, i) => `<span class="us-combo-option ${i === dt_active ? "is-active" : ""}" role="option" id="us-dt-${i}"
+							.map((d, i) => `${header(d, i)}<span class="us-combo-option ${i === dt_active ? "is-active" : ""}" role="option" id="us-dt-${i}"
 								aria-selected="${i === dt_active}" data-i="${i}">
 								<span class="us-combo-name">${mark(d.name)}</span><span class="us-combo-meta">${esc(dt_meta(d))}</span>
 							</span>`)

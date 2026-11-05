@@ -856,28 +856,34 @@ def _linked_doctypes(doctype: str) -> list[dict]:
 	usually needs access to as well.
 
 	Returns:
-		`[{"name", "module", "hint"}]`; `hint` names the first field that links there (blank for `doctype`).
-		Child tables and doctypes whose access can't be managed are left out.
+		`[{"name", "module", "group", "hint"}]` in that order. `group` is where the link was found:
+		`doctype` itself, or "<table label> (child table)"; blank for `doctype`'s own row. `hint` is the
+		label of the first field that links there. A doctype linked from several places is listed once,
+		at the first. Child tables themselves (they take their parent's permissions) and doctypes whose
+		access can't be managed are left out.
 	"""
 	meta = frappe.get_meta(doctype)
-	hints = {doctype: ""}
+	links = {doctype: ("", "")}
 	for df in meta.get_link_fields():
-		hints.setdefault(df.options, _(df.label or df.fieldname))
+		links.setdefault(df.options, (_(doctype), _(df.label or df.fieldname)))
 	for table in meta.get_table_fields():
+		group = _("{0} (child table)").format(_(table.label or table.fieldname))
 		for df in frappe.get_meta(table.options).get_link_fields():
-			hints.setdefault(
-				df.options, f"{_(table.label or table.fieldname)} > {_(df.label or df.fieldname)}"
-			)
+			links.setdefault(df.options, (group, _(df.label or df.fieldname)))
 	found = {
 		row.name: row
 		for row in frappe.get_all(
 			"DocType",
-			filters=[["name", "in", list(hints)], ["istable", "=", 0], ["name", "not in", BLOCKED_DOCTYPES]],
+			filters=[["name", "in", list(links)], ["istable", "=", 0], ["name", "not in", BLOCKED_DOCTYPES]],
 			fields=["name", "module"],
 			ignore_permissions=True,
 		)
 	}
-	return [{"name": n, "module": found[n].module, "hint": hints[n]} for n in hints if n in found]
+	return [
+		{"name": n, "module": found[n].module, "group": group, "hint": hint}
+		for n, (group, hint) in links.items()
+		if n in found
+	]
 
 
 def _suggested_permission_doctypes() -> list[dict]:
