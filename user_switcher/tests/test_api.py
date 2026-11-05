@@ -284,6 +284,7 @@ class TestSwitchHardening(IntegrationTestCase):
 			{api.RETIRED_SESSIONS: {"sids": ["older"], "at": frappe.utils.now()}}
 		)
 		new_session.data.data = frappe._dict()
+		new_session.sid = "new-sid"
 		login_manager = MagicMock()
 		login_manager.login_as.side_effect = lambda *a, **k: setattr(frappe.local, "session_obj", new_session)
 		with (
@@ -297,6 +298,9 @@ class TestSwitchHardening(IntegrationTestCase):
 		self.assertEqual(new_session.data.data[api.RETIRED_SESSIONS]["sids"], ["older", "old-sid"])
 		self.assertEqual(new_session.data.data.impersonated_by, "Administrator")
 		new_session.update.assert_called_once_with(force=True)
+		# The old session points at its replacement, so a late reply on it can't undo the switch
+		self.assertEqual(old_session.data.data[api.REPLACED_BY], "new-sid")
+		old_session.update.assert_called_once_with(force=True)
 
 
 class TestAccessGates(IntegrationTestCase):
@@ -374,6 +378,19 @@ class TestAccessGates(IntegrationTestCase):
 		at = frappe.utils.add_to_date(frappe.utils.now(), seconds=-seconds_ago, as_string=True)
 		frappe.session["data"] = frappe._dict({api.RETIRED_SESSIONS: {"sids": ["old-a", "old-b"], "at": at}})
 		self.addCleanup(frappe.session.__setitem__, "data", previous)
+
+	def test_late_request_on_replaced_session_gets_the_new_sid(self):
+		previous = frappe.session.get("data")
+		frappe.session["data"] = frappe._dict({api.REPLACED_BY: "new-sid"})
+		self.addCleanup(frappe.session.__setitem__, "data", previous)
+		cookies = MagicMock()
+		with (
+			patch.object(frappe.local, "cookie_manager", cookies, create=True),
+			patch.object(api, "delete_session") as delete,
+		):
+			api.retire_previous_sessions()
+		self.assertEqual(cookies.set_cookie.call_args.args, ("sid", "new-sid"))
+		delete.assert_not_called()
 
 	def test_replaced_sessions_survive_the_grace_period(self):
 		# A request still in flight with the old sid must not get "session expired" (it would clear the cookie)

@@ -4,7 +4,7 @@ import re
 
 import frappe
 from frappe import _
-from frappe.sessions import delete_session
+from frappe.sessions import delete_session, get_expiry_in_seconds
 from frappe.utils import cint, validate_email_address
 
 ALLOWED_ROLES = {"System Manager"}
@@ -18,6 +18,8 @@ TEST_USER_MARK = "%User Switcher%"
 # Session data key holding the sessions a switch replaced, and how long they stay usable
 RETIRED_SESSIONS = "user_switcher_retired"
 RETIRE_AFTER_SECONDS = 10
+# Session data key on a replaced session: the sid that took its place
+REPLACED_BY = "user_switcher_replaced_by"
 
 
 def _real_user() -> str:
@@ -177,13 +179,22 @@ def end_orphaned_session() -> None:
 
 
 def retire_previous_sessions() -> None:
-	"""`before_request` hook: delete the sessions a switch replaced, a few seconds after the switch.
+	"""`before_request` hook: finish a switch for requests that raced it.
 
-	A switch keeps the old session alive briefly (see `switch_to_user`); the first request made
-	with the new session after `RETIRE_AFTER_SECONDS` deletes it.
+	A switch keeps the old session alive briefly (see `switch_to_user`). A late request on the old
+	session gets the new sid back in its cookie, so its reply can't undo the switch; the first request
+	made with the new session after `RETIRE_AFTER_SECONDS` deletes the old one.
 	"""
 	data = getattr(frappe.session, "data", None)
-	retired = data.get(RETIRED_SESSIONS) if isinstance(data, dict) else None
+	if not isinstance(data, dict):
+		return
+	if replaced_by := data.get(REPLACED_BY):
+		# Frappe already queued this session's own sid for the reply; send the new one instead
+		frappe.local.cookie_manager.set_cookie(
+			"sid", replaced_by, max_age=get_expiry_in_seconds(), httponly=True
+		)
+		return
+	retired = data.get(RETIRED_SESSIONS)
 	if (
 		not retired
 		or frappe.utils.time_diff_in_seconds(frappe.utils.now(), retired["at"]) < RETIRE_AFTER_SECONDS
@@ -484,6 +495,9 @@ def switch_to_user(target_user: str, route: list | str | None = None):
 	# ? AND FRAPPE'S REPLY CLEARS THE BROWSER'S SID COOKIE, LOGGING THE USER OUT. retire_previous_sessions DELETES IT.
 	new_session.data.data[RETIRED_SESSIONS] = {"sids": [*waiting, old_sid], "at": frappe.utils.now()}
 	new_session.update(force=True)
+	if session_obj and session_data is not None:
+		session_data[REPLACED_BY] = new_session.sid
+		session_obj.update(force=True)
 
 	return {"current_user": target_user, "can_stay": can_stay}
 
