@@ -1073,15 +1073,21 @@ def explain_access(doctype: str, docname: str | None = None, ptype: str = "read"
 	Returns:
 		Dict with `user`, `doctype`, `docname`, `ptype`, `allowed`, `role_ok` (a role grants it),
 		`owner_only` (granted only on documents they created), `user_permission_ok` (User Permissions
-		let them see this document), `restrictions` (`[{"allow", "values"}]` of their User Permissions)
-		and `log` (Frappe's own step-by-step permission log).
+		let them see this document), `controller_ok` (the doctype's own `has_permission` code allows
+		it), `restrictions` (`[{"allow", "values"}]` of their User Permissions) and `log` (Frappe's own
+		step-by-step permission log).
 
 	Raises:
 		frappe.PermissionError: Caller may not switch users.
 		frappe.DoesNotExistError: The doctype or document does not exist.
 	"""
 	from frappe.core.doctype.user_permission.user_permission import get_user_permissions
-	from frappe.permissions import _pop_debug_log, get_role_permissions, has_user_permission
+	from frappe.permissions import (
+		_pop_debug_log,
+		get_role_permissions,
+		has_controller_permissions,
+		has_user_permission,
+	)
 
 	if not _can_switch():
 		_deny(_("Not permitted"), "explain_access", doctype)
@@ -1115,6 +1121,7 @@ def explain_access(doctype: str, docname: str | None = None, ptype: str = "read"
 		"role_ok": bool(role_perms.get(ptype)),
 		"owner_only": bool(role_perms.get("if_owner", {}).get(ptype)),
 		"user_permission_ok": has_user_permission(doc, user, ptype=ptype) if doc else True,
+		"controller_ok": has_controller_permissions(doc, ptype, user=user) if doc else True,
 		"restrictions": restrictions,
 		"log": log,
 	}

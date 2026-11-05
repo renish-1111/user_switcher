@@ -212,6 +212,7 @@ class TestTesterTools(IntegrationTestCase):
 
 	def test_explain_access(self):
 		user = self._test_user("us_explain@example.com", ["Website Manager"])
+		todo = frappe.get_doc({"doctype": "ToDo", "description": "us explain"}).insert().name
 		frappe.set_user(user)
 		try:
 			with patch.object(api, "_real_user", return_value="Administrator"):
@@ -220,6 +221,9 @@ class TestTesterTools(IntegrationTestCase):
 				self.assertFalse(out["role_ok"])
 				self.assertTrue(out["log"])
 				self.assertTrue(api.explain_access("ToDo")["allowed"])
+				# A role allows ToDo, but ToDo's own has_permission only lets owners and assignees in
+				out = api.explain_access("ToDo", todo)
+				self.assertEqual((out["allowed"], out["role_ok"], out["controller_ok"]), (False, True, False))
 		finally:
 			frappe.set_user("Administrator")
 

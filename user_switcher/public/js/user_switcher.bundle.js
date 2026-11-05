@@ -561,8 +561,8 @@
 									<div class="us-role-pop-foot" hidden>
 										<span>${t("Users with")}</span>
 										<span class="us-seg" role="group" aria-label="${t("Match")}">
-											<button type="button" data-match="any">${t("any of these")}</button>
-											<button type="button" data-match="all">${t("all of these")}</button>
+											<button type="button" data-match="any" title="${t("Users with at least one of the ticked roles")}">${t("any")}</button>
+											<button type="button" data-match="all" title="${t("Users with every ticked role")}">${t("all")}</button>
 										</span>
 									</div>
 								</div>
@@ -1954,7 +1954,9 @@
 					<div class="us-why-text"><b>${title}</b><p>${text}</p>${action}</div>
 				</div>`;
 			const button = (action, label) => `<button type="button" class="us-btn us-why-action" data-action="${action}">${label}</button>`;
-			const limits = x.restrictions.map((r) => `${esc(r.allow)}: ${esc(r.values.join(", "))}`).join(" · ");
+			const short = (values) =>
+				esc(values.slice(0, 3).join(", ")) + (values.length > 3 ? ` ${t("+{0} more", [values.length - 3])}` : "");
+			const limits = x.restrictions.map((r) => `<b>${esc(r.allow)}</b>: ${short(r.values)}`).join(" · ");
 
 			const steps = [];
 			if (x.role_ok) {
@@ -1970,6 +1972,9 @@
 				steps.push(step("ok", t("User Permissions allow this document"), limits ? t("Their limits: {0}", [limits]) : t("They have no User Permissions.")));
 			} else if (limits) {
 				steps.push(step("info", t("Limited by User Permissions"), t("Lists and reports only show records within: {0}", [limits]), button("perms", t("User permissions"))));
+			}
+			if (x.docname && !x.controller_ok) {
+				steps.push(step("bad", t("{0}'s own rule blocks it", [esc(x.doctype)]), t("Code in {0} (a has_permission hook) decides who may open each document, for example only its owner or the people it is assigned to. Roles can't override it.", [`<b>${esc(x.doctype)}</b>`])));
 			}
 			if (x.allowed && !x.role_ok && !x.owner_only) {
 				steps.push(step("ok", t("Shared with them"), t("The document is shared with them, so the role rules don't matter.")));
@@ -2083,7 +2088,7 @@
 				rows.forEach((r) => (groups[r.allow] ||= []).push(r));
 				$list.html(
 					Object.entries(groups)
-						.map(([allow, list]) => `<div class="us-group">${t("Only these {0}", [esc(allow)])}</div>` +
+						.map(([allow, list]) => `<div class="us-group">${esc(allow)}</div>` +
 							list.map((r) => `<div class="us-perm-row">
 								<span class="us-perm-value-text">${esc(r.for_value)}</span>
 								${r.is_default ? `<span class="us-chip">${t("Default")}</span>` : ""}
