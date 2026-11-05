@@ -338,7 +338,8 @@
 
 #us-floating-container.us-info-mode .us-head-back,
 #us-floating-container.us-creating .us-head-back,
-#us-floating-container.us-access-mode .us-head-back {
+#us-floating-container.us-access-mode .us-head-back,
+#us-floating-container.us-panel-mode .us-head-back {
 	display: flex;
 }
 
@@ -408,6 +409,19 @@
 #us-floating-container .us-tile svg {
 	width: 18px;
 	height: 18px;
+}
+
+/* Five tiles share one row; long labels shorten instead of wrapping */
+#us-floating-container .us-tile span {
+	max-width: 100%;
+	padding: 0 4px;
+	overflow: hidden;
+	white-space: nowrap;
+	text-overflow: ellipsis;
+}
+
+#us-floating-container .us-tile[hidden] {
+	display: none;
 }
 
 /* Search */
@@ -630,10 +644,35 @@
 	font-weight: 600;
 }
 
-#us-floating-container .us-combo-check {
+/* Tick column in the role list: empty until picked, so names stay aligned */
+#us-floating-container .us-combo-tick {
+	display: grid;
+	place-items: center;
 	flex-shrink: 0;
-	color: var(--us-accent);
-	font-weight: 600;
+	width: 16px;
+	margin-right: -4px;
+	color: var(--us-text);
+}
+
+#us-floating-container .us-combo-tick svg {
+	width: 14px;
+	height: 14px;
+}
+
+#us-floating-container .us-role-pop-foot {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	gap: 8px;
+	margin-top: 4px;
+	padding: 8px 4px 2px;
+	border-top: 1px solid var(--us-border);
+	font-size: 12px;
+	color: var(--us-muted);
+}
+
+#us-floating-container .us-role-pop-foot[hidden] {
+	display: none;
 }
 
 /* List */
@@ -1092,7 +1131,8 @@
 }
 
 #us-floating-container .us-create,
-#us-floating-container .us-access {
+#us-floating-container .us-access,
+#us-floating-container .us-panel {
 	display: none;
 	flex-direction: column;
 	gap: 12px;
@@ -1105,7 +1145,8 @@
 }
 
 #us-floating-container.us-creating .us-create,
-#us-floating-container.us-access-mode .us-access {
+#us-floating-container.us-access-mode .us-access,
+#us-floating-container.us-panel-mode .us-panel {
 	display: flex;
 }
 
@@ -1114,13 +1155,17 @@
 #us-floating-container.us-creating .us-footer,
 #us-floating-container.us-access-mode .us-browse,
 #us-floating-container.us-access-mode .us-switch-back,
-#us-floating-container.us-access-mode .us-footer {
+#us-floating-container.us-access-mode .us-footer,
+#us-floating-container.us-panel-mode .us-browse,
+#us-floating-container.us-panel-mode .us-switch-back,
+#us-floating-container.us-panel-mode .us-footer {
 	display: none;
 }
 
 /* Same size whatever the screen holds, so the popup never jumps while filtering */
 #us-floating-container.us-creating .us-card,
-#us-floating-container.us-access-mode .us-card {
+#us-floating-container.us-access-mode .us-card,
+#us-floating-container.us-panel-mode .us-card {
 	height: min(760px, calc(100vh - 100px));
 }
 
@@ -1533,6 +1578,10 @@
 }
 
 #us-floating-container .us-access-summary-title {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	gap: 8px;
 	font-weight: 500;
 }
 
@@ -1834,6 +1883,341 @@
 	text-decoration: underline;
 }
 
+/* ---------- Shared bits for the newer screens ---------- */
+
+/* Segmented choice: role match (any / all), the right to check in Why */
+#us-floating-container .us-seg {
+	display: inline-flex;
+	align-self: flex-start;
+	padding: 2px;
+	border-radius: 8px;
+	background: var(--us-hover);
+}
+
+#us-floating-container .us-seg button {
+	height: 26px;
+	padding: 0 10px;
+	border-radius: 6px;
+	font-size: 12px;
+	font-weight: 500;
+	color: var(--us-label);
+}
+
+#us-floating-container .us-seg button.is-on {
+	background: var(--us-bg);
+	color: var(--us-text);
+	box-shadow: 0 1px 2px rgba(16, 24, 40, 0.12);
+}
+
+#us-floating-container .us-link {
+	display: inline-flex;
+	align-items: center;
+	gap: 4px;
+	padding: 0;
+	font-size: 12px;
+	font-weight: 500;
+	color: var(--us-info);
+}
+
+#us-floating-container .us-link:hover {
+	text-decoration: underline;
+}
+
+#us-floating-container .us-link svg {
+	width: 14px;
+	height: 14px;
+}
+
+#us-floating-container .us-btn--danger {
+	background: var(--us-bad);
+	border-color: var(--us-bad);
+	color: #fff;
+}
+
+#us-floating-container .us-btn--danger:hover {
+	background: var(--us-bad);
+	filter: brightness(1.1);
+}
+
+#us-floating-container .us-panel-body {
+	display: flex;
+	flex-direction: column;
+	gap: 12px;
+}
+
+#us-floating-container .us-panel-actions:empty {
+	display: none;
+}
+
+/* Manage roles: roles changed earlier, with an undo */
+#us-floating-container .us-roles-original {
+	display: flex;
+	align-items: center;
+	gap: 10px;
+	padding: 8px 8px 8px 12px;
+	border-radius: 9px;
+	background: var(--us-bg-subtle);
+	border: 1px solid var(--us-border);
+	font-size: 12px;
+	color: var(--us-label);
+}
+
+#us-floating-container .us-roles-original span {
+	flex: 1;
+	min-width: 0;
+}
+
+#us-floating-container .us-roles-original b {
+	font-weight: 600;
+	color: var(--us-text);
+}
+
+#us-floating-container .us-roles-original[hidden] {
+	display: none;
+}
+
+#us-floating-container .us-roles-original .us-btn {
+	flex-shrink: 0;
+	height: 30px;
+	padding: 0 12px;
+	font-size: 12px;
+}
+
+/* ---------- Why can't they open it? ---------- */
+
+#us-floating-container .us-why-result {
+	display: flex;
+	flex-direction: column;
+	gap: 8px;
+}
+
+#us-floating-container .us-why-verdict {
+	display: flex;
+	align-items: center;
+	gap: 10px;
+	padding: 10px 12px;
+	border-radius: 10px;
+	font-size: 13px;
+}
+
+#us-floating-container .us-why-verdict.is-ok {
+	background: var(--us-ok-bg);
+	color: var(--us-ok);
+}
+
+#us-floating-container .us-why-verdict.is-bad {
+	background: var(--us-bad-bg);
+	color: var(--us-bad);
+}
+
+#us-floating-container .us-why-verdict b {
+	font-weight: 600;
+}
+
+#us-floating-container .us-why-step {
+	display: flex;
+	gap: 10px;
+	padding: 10px 12px;
+	border: 1px solid var(--us-border);
+	border-radius: 10px;
+}
+
+#us-floating-container .us-why-icon {
+	display: grid;
+	place-items: center;
+	flex-shrink: 0;
+	width: 22px;
+	height: 22px;
+	border-radius: 50%;
+}
+
+#us-floating-container .us-why-icon svg {
+	width: 13px;
+	height: 13px;
+}
+
+#us-floating-container .us-why-step.is-ok .us-why-icon {
+	background: var(--us-ok-bg);
+	color: var(--us-ok);
+}
+
+#us-floating-container .us-why-step.is-bad .us-why-icon {
+	background: var(--us-bad-bg);
+	color: var(--us-bad);
+}
+
+#us-floating-container .us-why-step.is-info .us-why-icon {
+	background: var(--us-hover);
+	color: var(--us-info);
+}
+
+#us-floating-container .us-why-text {
+	display: flex;
+	flex-direction: column;
+	align-items: flex-start;
+	gap: 2px;
+	min-width: 0;
+	font-size: 13px;
+}
+
+#us-floating-container .us-why-text p {
+	margin: 0;
+	font-size: 12px;
+	color: var(--us-muted);
+	overflow-wrap: anywhere;
+}
+
+#us-floating-container .us-why-text p b {
+	font-weight: 600;
+	color: var(--us-text);
+}
+
+#us-floating-container .us-why-text .us-btn {
+	height: 28px;
+	margin-top: 6px;
+	padding: 0 10px;
+	font-size: 12px;
+}
+
+#us-floating-container .us-why-log {
+	font-size: 12px;
+	color: var(--us-muted);
+}
+
+#us-floating-container .us-why-log summary {
+	cursor: pointer;
+	padding: 4px 0;
+}
+
+#us-floating-container .us-why-log ol {
+	margin: 4px 0 0;
+	padding-left: 20px;
+	font-family: var(--font-family-monospace, ui-monospace, monospace);
+	font-size: 11px;
+	line-height: 1.6;
+	overflow-wrap: anywhere;
+}
+
+/* ---------- User permissions ---------- */
+
+#us-floating-container .us-perm-add {
+	display: grid;
+	grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) auto;
+	align-items: end;
+	gap: 8px;
+}
+
+#us-floating-container .us-perm-add .us-btn {
+	height: 34px;
+}
+
+#us-floating-container .us-perm-default {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	margin: -4px 0 0;
+	font-size: 12px;
+	font-weight: 400;
+	color: var(--us-label);
+	--checkbox-right-margin: 0;
+}
+
+#us-floating-container .us-perm-list {
+	display: flex;
+	flex-direction: column;
+}
+
+#us-floating-container .us-perm-row {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	min-height: 34px;
+	padding: 0 4px 0 10px;
+	border-radius: 7px;
+	font-size: 13px;
+}
+
+#us-floating-container .us-perm-row:hover {
+	background: var(--us-hover);
+}
+
+#us-floating-container .us-perm-value-text {
+	flex: 1;
+	min-width: 0;
+	overflow: hidden;
+	white-space: nowrap;
+	text-overflow: ellipsis;
+}
+
+#us-floating-container .us-perm-remove svg {
+	width: 14px;
+	height: 14px;
+}
+
+/* ---------- Clean up ---------- */
+
+#us-floating-container .us-clean-all {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	margin: 0;
+	cursor: pointer;
+	--checkbox-right-margin: 0;
+}
+
+#us-floating-container .us-clean-row {
+	display: flex;
+	align-items: center;
+	gap: 10px;
+	min-height: 48px;
+	margin: 0;
+	padding: 4px 8px;
+	border-radius: 8px;
+	font-weight: 400;
+	--checkbox-right-margin: 0;
+}
+
+#us-floating-container label.us-clean-row {
+	cursor: pointer;
+}
+
+#us-floating-container .us-clean-row:hover {
+	background: var(--us-hover);
+}
+
+#us-floating-container .us-clean-row .us-item-text {
+	flex: 1;
+}
+
+#us-floating-container .us-clean-row .us-item-email {
+	display: flex;
+	flex-wrap: wrap;
+	gap: 0 8px;
+}
+
+#us-floating-container .us-clean-meta {
+	flex-shrink: 0;
+	font-size: 11px;
+	color: var(--us-muted);
+}
+
+#us-floating-container .us-clean-row .us-btn {
+	flex-shrink: 0;
+	height: 30px;
+	padding: 0 12px;
+	font-size: 12px;
+}
+
+@media (max-width: 520px) {
+	#us-floating-container .us-perm-add {
+		grid-template-columns: minmax(0, 1fr);
+	}
+
+	#us-floating-container .us-clean-meta {
+		display: none;
+	}
+}
+
 /* ---------- Switched banner (every page) ---------- */
 
 #us-banner {
@@ -1923,6 +2307,24 @@
 
 #us-banner .us-banner-back:hover {
 	filter: brightness(1.08);
+}
+
+/* Auto switch back: "Auto back" when off, a countdown when on */
+#us-banner .us-banner-timer {
+	padding: 3px 8px;
+	border-radius: 6px;
+	border: 1px solid var(--us-banner-border);
+	font-variant-numeric: tabular-nums;
+	opacity: 0.85;
+}
+
+#us-banner .us-banner-timer:hover,
+#us-banner .us-banner-timer.is-on {
+	opacity: 1;
+}
+
+#us-banner .us-banner-timer.is-on {
+	font-weight: 600;
 }
 
 #us-banner .us-banner-collapse {

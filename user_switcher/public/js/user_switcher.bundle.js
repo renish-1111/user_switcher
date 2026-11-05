@@ -8,6 +8,10 @@
 	const USAGE_KEY = "user_switcher_usage";
 	const PINS_KEY = "user_switcher_pins";
 	const LEGACY_RECENT_KEY = "user_switcher_recent";
+	const SWITCHED_AT_KEY = "user_switcher_switched_at";
+	const AUTO_BACK_KEY = "user_switcher_auto_back";
+	// Minutes the banner's timer button cycles through; 0 = off
+	const AUTO_BACK_CHOICES = [0, 15, 30, 60];
 	const MAX_MOST_USED = 5;
 	// Ctrl+S is Frappe's Save, so the switcher uses Ctrl+Shift+S
 	const SHORTCUT_LABEL = "Ctrl+Shift+S";
@@ -38,6 +42,11 @@
 		lock: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="11" width="16" height="10" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/></svg>`,
 		user_plus: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="10" cy="8" r="4"/><path d="M2 21a8 8 0 0 1 16 0M19 8v6M16 11h6"/></svg>`,
 		filter: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 5h18l-7 8.5V19l-4 2v-7.5z"/></svg>`,
+		clock: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg>`,
+		sliders: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 6h9M17 6h3M4 12h3M11 12h9M4 18h11M19 18h1"/><circle cx="15" cy="6" r="2"/><circle cx="9" cy="12" r="2"/><circle cx="17" cy="18" r="2"/></svg>`,
+		trash: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 7h16M10 11v6M14 11v6M6 7l1 13h10l1-13M9 7V4h6v3"/></svg>`,
+		help: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M9.5 9.5a2.5 2.5 0 1 1 3.5 2.3c-.6.3-1 .9-1 1.6v.6"/><path d="M12 17.5h.01"/></svg>`,
+		check: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="m5 12 5 5 9-10"/></svg>`,
 		eye: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12z"/><circle cx="12" cy="12" r="3"/></svg>`,
 	};
 
@@ -155,6 +164,77 @@
 		return out;
 	}
 
+	// A text field with our own suggestion list, styled like the widget (a <datalist> uses the browser's menu).
+	// fetch(q) resolves to the options, label(option, q) gives one option's HTML, pick(option) runs on Enter or click.
+	function combo($input, $list, { fetch, label, pick }) {
+		let options = [];
+		let active = -1;
+		let timer;
+		let request = 0;
+		const show = (on) => $list.prop("hidden", !on || !$list.children().length);
+		const paint = (q) => {
+			$list.html(
+				options.length
+					? options
+							.map((o, i) => `<span class="us-combo-option ${i === active ? "is-active" : ""}" role="option" data-i="${i}">${label(o, q)}</span>`)
+							.join("")
+					: `<span class="us-combo-empty">${t("No matches")}</span>`
+			);
+			show(true);
+		};
+		const load = (wait) => {
+			clearTimeout(timer);
+			timer = setTimeout(() => {
+				const q = $input.val().trim();
+				const mine = ++request;
+				fetch(q).then((list) => {
+					if (mine !== request || !$input.is(":focus")) return;
+					options = list || [];
+					active = options.length ? 0 : -1;
+					paint(q);
+				});
+			}, wait);
+		};
+		const choose = (o) => {
+			show(false);
+			pick(o);
+		};
+		$input.on("focus", () => load(0)).on("input", () => load(150));
+		$input.on("keydown", (e) => {
+			const shown = !$list.prop("hidden");
+			if ((e.key === "ArrowDown" || e.key === "ArrowUp") && options.length) {
+				e.preventDefault();
+				active = (active + (e.key === "ArrowDown" ? 1 : -1) + options.length) % options.length;
+				paint($input.val().trim());
+				$list.find(".is-active")[0]?.scrollIntoView({ block: "nearest" });
+			} else if (e.key === "Enter" && shown && options[active]) {
+				e.preventDefault();
+				e.combo_picked = true; // later handlers on this field: this Enter was a pick, not a submit
+				choose(options[active]);
+			} else if (e.key === "Escape" && shown) {
+				// Close only the list, not the whole screen
+				e.preventDefault();
+				e.stopPropagation();
+				show(false);
+			}
+		});
+		// mousedown, not click: picking must happen before the input's blur closes the list
+		$list.on("mousedown", ".us-combo-option", function (e) {
+			e.preventDefault();
+			choose(options[this.dataset.i]);
+		});
+		$input.on("blur", () => setTimeout(() => show(false), 100));
+	}
+
+	function when(date) {
+		return frappe.datetime?.comment_when ? frappe.datetime.comment_when(date) : esc(String(date || "").slice(0, 10));
+	}
+
+	function ask(message, yes) {
+		if (frappe.confirm) frappe.confirm(message, yes);
+		else if (window.confirm($("<div>").html(message).text())) yes();
+	}
+
 	function slug(s) {
 		return (s || "")
 			.toLowerCase()
@@ -254,17 +334,29 @@
 
 	// ---------- switching (shared by the widget and the banner) ----------
 
+	// The desk route to try to keep after a switch; null off the desk, where pages simply reload
+	function desk_route() {
+		return /^\/(app|desk)(\/|$)/.test(window.location.pathname) ? JSON.stringify(frappe.get_route?.() || []) : null;
+	}
+
+	// When the current switch started, for the auto switch-back timer (per real user, shared by tabs)
+	function mark_switched(on) {
+		storage(localStorage, `${SWITCHED_AT_KEY}:${who.real}`, on ? String(Date.now()) : null);
+	}
+
 	function switch_to(user, { back = false, to = null } = {}) {
 		$("#us-floating-container").removeClass("us-open").addClass("us-busy");
 		frappe.dom?.freeze?.(t("Switching to {0}...", [esc(display_name(user))]));
+		const route = desk_route();
 		return frappe
 			.call({
 				method: back ? `${API}.switch_back` : `${API}.switch_to_user`,
-				args: back ? {} : { target_user: user.name },
+				args: back ? { route } : { target_user: user.name, route },
 				type: "POST",
 			})
-			.then(() => {
+			.then((r) => {
 				if (!back) store.remember(user);
+				mark_switched(!back);
 				// sessionStorage caches are per-user; drop them before the new user's page loads
 				try {
 					Object.keys(sessionStorage)
@@ -272,9 +364,8 @@
 						.forEach((k) => sessionStorage.removeItem(k));
 				} catch (e) {}
 				if (to) window.location.href = to;
-				// The current desk route may not be accessible to the new user, so restart from /app
-				else if (window.location.pathname === "/app") window.location.reload();
-				else if (window.location.pathname.startsWith("/app") || window.location.pathname.startsWith("/desk")) window.location.href = "/app";
+				// Stay on this page when the new user may open it; otherwise start over from the desk home
+				else if (route !== null && !r.message?.can_stay) window.location.href = "/app";
 				else window.location.reload();
 			})
 			.catch(() => {
@@ -291,6 +382,7 @@
 
 	function render_banner(me, real) {
 		$("#us-banner").remove();
+		clearInterval(paint_auto_back.tick);
 		if (!who.is_switched) return;
 
 		const collapsed = storage(sessionStorage, BANNER_KEY) === "1";
@@ -300,6 +392,7 @@
 				<div class="us-banner-pill">
 					<span class="us-banner-icon">${ICONS.eye}</span>
 					<span class="us-banner-text">${t("Viewing as {0}", [`<b>${esc(display_name(me))}</b>`])}</span>
+					<button class="us-banner-timer">${ICONS.clock}<span></span></button>
 					<button class="us-banner-back" title="${t("Switch back ({0})", [BACK_SHORTCUT_LABEL])}">
 						${ICONS.back}<span>${t("Back to {0}", [esc(display_name(real))])}</span>
 					</button>
@@ -309,6 +402,7 @@
 		`).appendTo("body");
 
 		$banner.find(".us-banner-back").on("click", switch_back);
+		paint_auto_back($banner.find(".us-banner-timer"));
 		$banner.find(".us-banner-collapse").on("click", (e) => {
 			e.stopPropagation();
 			$banner.addClass("us-banner--collapsed");
@@ -320,6 +414,59 @@
 			$banner.removeClass("us-banner--collapsed");
 			storage(sessionStorage, BANNER_KEY, null);
 		});
+	}
+
+	// ---------- auto switch back (the banner's timer button) ----------
+
+	const auto_back = {
+		key: () => `${AUTO_BACK_KEY}:${who.real}`,
+		minutes() {
+			return +storage(localStorage, this.key()) || 0;
+		},
+		set(minutes) {
+			storage(localStorage, this.key(), minutes ? String(minutes) : null);
+			mark_switched(true); // count from the moment it's turned on or changed
+		},
+		started() {
+			const key = `${SWITCHED_AT_KEY}:${who.real}`;
+			// Switched before this was recorded (or in another browser): count from now
+			if (!+storage(localStorage, key)) mark_switched(true);
+			return +storage(localStorage, key) || Date.now();
+		},
+	};
+
+	function paint_auto_back($timer) {
+		clearInterval(paint_auto_back.tick);
+		const mmss = (ms) => {
+			const s = Math.max(0, Math.ceil(ms / 1000));
+			return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}`;
+		};
+		const paint = () => {
+			const minutes = auto_back.minutes();
+			const left = minutes ? auto_back.started() + minutes * 60000 - Date.now() : 0;
+			if (minutes && left <= 0) {
+				clearInterval(paint_auto_back.tick);
+				switch_back();
+				return;
+			}
+			$timer
+				.toggleClass("is-on", !!minutes)
+				.attr("title", minutes ? t("Back to your account in {0}. Click to change.", [mmss(left)]) : t("Switch back automatically after 15, 30 or 60 minutes"))
+				.find("span")
+				.text(minutes ? mmss(left) : t("Auto back"));
+		};
+		$timer.on("click", (e) => {
+			e.stopPropagation();
+			const next = AUTO_BACK_CHOICES[(AUTO_BACK_CHOICES.indexOf(auto_back.minutes()) + 1) % AUTO_BACK_CHOICES.length];
+			auto_back.set(next);
+			frappe.show_alert?.({
+				message: next ? t("Switching back automatically in {0} minutes", [next]) : t("Auto switch back is off"),
+				indicator: "blue",
+			});
+			paint();
+		});
+		paint();
+		paint_auto_back.tick = setInterval(paint, 1000);
 	}
 
 	// ---------- permission probe ----------
@@ -356,9 +503,14 @@
 			${item("swap", t("Switch to a user"), t("Click a user, or press its number {0} to {1}. Type in the search box to find someone by name or email.", [kbd(1), kbd(9)]))}
 			${item("back", t("Come back to your own account"), t("Press {0}, click “Back to …” at the top, or press {1} on any page. Inside a screen, the ‹ arrow next to the picture, Esc, or Backspace (when you are not typing) returns to the list.", [kbd(0), kbd(BACK_SHORTCUT_LABEL)]))}
 			${item("star", t("Pinned users"), t("Click the star on a user to pin them at the top. Pinned users keep their numbers, even after you switch. Drag a pinned user up or down to change the order. Users you switch to often also show under Most used."))}
-			${item("shield", t("Manage roles"), t("Click Manage roles to give or remove roles (access) for the user you are viewing as. Tick the roles, then press Save roles."))}
+			${item("filter", t("Filter by role"), t("Click Role next to All, System and Website, then tick one or more roles. With two or more, choose users with any of them or all of them."))}
+			${item("shield", t("Manage roles"), t("Click Manage roles to give or remove roles (access) for the user you are viewing as. Tick the roles, then press Save roles. The first roles a user had are kept, so Restore original puts them back."))}
+			${item("sliders", t("User permissions"), t("Click User permissions to limit the user you are viewing as to some records, for example one Company. Pick a doctype and a value, then press Add."))}
 			${item("key", t("Doctype access"), t("Click Doctype access to choose which roles can read, write, create or submit a doctype. The roles of the user you are viewing as come first, so one click gives them what they are missing. When a page says Not permitted while you are switched, use Fix access in the message."))}
+			${item("help", t("Why can't they open it?"), t("When a page says Not permitted, click Why? in the message. It shows which rule stops them: no role, User Permissions, or only their own documents. You can also open it from Doctype access."))}
 			${item("plus", t("Create a test user"), t("Click New test user, type a name, then tick the roles or pick a role profile to tick its roles at once. You can switch into the new user right away."))}
+			${item("trash", t("Clean up"), t("Click Clean up to delete or disable test users, and to undo role changes made with the switcher."))}
+			${item("clock", t("Auto switch back"), t("Click Auto back in the yellow bar to return to your own account after 15, 30 or 60 minutes. Click again to change or turn it off. When you switch, you stay on the same page if the other user may open it."))}
 			${item("eye", t("Hide the button"), t("Click Hide to remove the button until your next login. Press {0} to bring it back.", [kbd(SHORTCUT_LABEL)]))}
 			<div class="us-info-keys">
 				<span>${kbd(SHORTCUT_LABEL)} ${t("open or close")}</span>
@@ -380,8 +532,10 @@
 					<div class="us-browse">
 						<div class="us-tiles">
 							<button type="button" class="us-tile us-tile-roles">${ICONS.shield}<span>${t("Manage roles")}</span></button>
+							<button type="button" class="us-tile us-tile-perms" title="${t("Limit them to some records, e.g. one Company")}">${ICONS.sliders}<span>${t("User permissions")}</span></button>
 							<button type="button" class="us-tile us-tile-access">${ICONS.lock}<span>${t("Doctype access")}</span></button>
 							<button type="button" class="us-tile us-new">${ICONS.user_plus}<span>${t("New test user")}</span></button>
+							<button type="button" class="us-tile us-tile-cleanup" title="${t("Remove test users, undo role changes")}">${ICONS.trash}<span>${t("Clean up")}</span></button>
 						</div>
 						<div class="us-search">
 							<span class="us-search-icon">${ICONS.search}</span>
@@ -403,7 +557,14 @@
 										<input type="text" role="combobox" aria-expanded="true" aria-controls="us-role-options" aria-autocomplete="list"
 											placeholder="${t("Search roles")}" ${NO_AUTOFILL}>
 									</span>
-									<span class="us-combo-list" id="us-role-options" role="listbox"></span>
+									<span class="us-combo-list" id="us-role-options" role="listbox" aria-multiselectable="true"></span>
+									<div class="us-role-pop-foot" hidden>
+										<span>${t("Users with")}</span>
+										<span class="us-seg" role="group" aria-label="${t("Match")}">
+											<button type="button" data-match="any">${t("any of these")}</button>
+											<button type="button" data-match="all">${t("all of these")}</button>
+										</span>
+									</div>
 								</div>
 							</div>
 						</div>
@@ -431,6 +592,7 @@
 							<span>${t("Role profiles")}</span>
 							<div class="us-profile-strip" role="group" aria-label="${t("Role profiles")}"></div>
 						</div>
+						<div class="us-roles-original" hidden></div>
 						<div class="us-field us-roles-field">
 							<span class="us-field-row">
 								<span>${t("Roles")}</span>
@@ -491,6 +653,17 @@
 						</div>
 					</div>
 
+					<div class="us-panel">
+						<div class="us-create-head">
+							<span class="us-create-titles">
+								<span class="us-create-title"></span>
+								<span class="us-create-sub"></span>
+							</span>
+						</div>
+						<div class="us-panel-body"></div>
+						<div class="us-create-actions us-panel-actions"></div>
+					</div>
+
 					<div class="us-footer">
 						<span class="us-hints">
 							<span>${t("Press a number to switch")}</span>
@@ -521,7 +694,7 @@
 		const $rf_pop = $rf.find(".us-role-pop");
 		const $rf_input = $rf_pop.find("input");
 		const $rf_list = $rf_pop.find(".us-combo-list");
-		const state = { ctx: null, user_type: "", role: "", txt: "", request_id: 0, creating: false, info: false, editing: null, roles: null, picked: new Set(), access: null };
+		const state = { ctx: null, user_type: "", role_filter: [], role_match: "any", panel: null, txt: "", request_id: 0, creating: false, info: false, editing: null, roles: null, picked: new Set(), access: null };
 		let search_timer;
 
 		if (storage(sessionStorage, HIDDEN_KEY) === "1") $root.addClass("us-hidden");
@@ -543,6 +716,7 @@
 		}
 
 		function show_info(on) {
+			if (on && state.panel) show_panel(null);
 			if (on && state.creating) show_create(false);
 			if (on && state.access) show_access(false);
 			state.info = on;
@@ -555,10 +729,13 @@
 		$root.find(".us-info-btn").on("click", () => show_info(!state.info));
 		$root.find(".us-tile-roles").on("click", () => state.ctx && show_roles(state.ctx.current_user));
 		$root.find(".us-tile-access").on("click", () => show_access(true, route_doctype()));
+		$root.find(".us-tile-perms").on("click", () => show_panel("perms"));
+		$root.find(".us-tile-cleanup").on("click", () => show_panel("cleanup"));
 
 		// Leave whichever sub-screen is open and return to the user list
 		function go_back() {
-			if (state.info) show_info(false);
+			if (state.panel) show_panel(null);
+			else if (state.info) show_info(false);
 			else if (state.access) show_access(false);
 			else if (state.creating) show_create(false);
 		}
@@ -602,8 +779,9 @@
 			}
 			if (!is_open()) return;
 
+			const sub_screen = state.info || state.access || state.creating || state.panel;
 			if (e.key === "Escape") {
-				if (state.info || state.access || state.creating) go_back();
+				if (sub_screen) go_back();
 				else {
 					close();
 					$trigger.trigger("focus");
@@ -612,12 +790,12 @@
 			}
 			// Backspace also goes back, but never while typing: deleting text must not throw away a half-filled form
 			const typing = $(e.target).is("input:not([type=checkbox]):not([type=radio]), textarea, select, [contenteditable]");
-			if (e.key === "Backspace" && !typing && (state.info || state.access || state.creating)) {
+			if (e.key === "Backspace" && !typing && sub_screen) {
 				e.preventDefault();
 				go_back();
 				return;
 			}
-			if (state.creating || state.info || state.access) return; // let the form have every other key
+			if (sub_screen) return; // let the form have every other key
 
 			// 1-9 switch to the numbered user, 0 goes back. Only while the search box is
 			// empty, so digits can still be typed to search once a query is started.
@@ -661,6 +839,7 @@
 
 		let rf_options = [];
 		let rf_active = 0;
+		let rf_first = new Set();
 
 		function open_role_pop(open) {
 			if (open === !$rf_pop.prop("hidden")) return;
@@ -668,50 +847,79 @@
 			$rf_btn.attr("aria-expanded", String(open));
 			if (!open) return;
 			$rf_input.val("");
+			rf_active = 0;
+			rf_first = new Set(state.role_filter);
 			paint_role_options();
-			fetch_roles().then((roles) => {
-				rf_active = state.role ? roles.findIndex((r) => r.name === state.role) + 1 : 0;
-				paint_role_options();
-				$rf_list.find(".is-active")[0]?.scrollIntoView({ block: "nearest" });
-			});
+			fetch_roles().then(paint_role_options);
 			setTimeout(() => $rf_input.trigger("focus"), 0);
 		}
 
+		// Roles picked when the list opened come first; the order then holds so rows don't jump while ticking.
+		// "All roles" clears the picks.
 		function paint_role_options() {
 			if (!state.roles) return $rf_list.html(`<span class="us-combo-empty">${t("Loading roles...")}</span>`);
 			const q = $rf_input.val().trim();
-			rf_options = [...(q ? [] : [{ name: "" }]), ...search(state.roles, q, (r) => r.name)];
+			const picked = new Set(state.role_filter);
+			const found = search(state.roles, q, (r) => r.name);
+			rf_options = [
+				...(q ? [] : [{ name: "" }]),
+				...found.filter((r) => rf_first.has(r.name)),
+				...found.filter((r) => !rf_first.has(r.name)),
+			];
 			rf_active = Math.min(rf_active, rf_options.length - 1);
 			$rf_list.html(
 				rf_options.length
 					? rf_options
 							.map((r, i) => {
-								const picked = r.name === state.role;
-								return `<span class="us-combo-option ${i === rf_active ? "is-active" : ""} ${picked ? "is-picked" : ""}"
-									role="option" id="us-rf-${i}" aria-selected="${picked}" data-i="${i}">
+								const on = r.name ? picked.has(r.name) : !picked.size;
+								return `<span class="us-combo-option ${i === rf_active ? "is-active" : ""} ${on ? "is-picked" : ""}"
+									role="option" id="us-rf-${i}" aria-selected="${on}" data-i="${i}">
+									<span class="us-combo-tick">${on ? ICONS.check : ""}</span>
 									<span class="us-combo-name">${r.name ? mark_match(r.name, q) : t("All roles")}</span>
-									${picked ? `<span class="us-combo-check">✓</span>` : ""}
 								</span>`;
 							})
 							.join("")
 					: `<span class="us-combo-empty">${t("No role matches “{0}”", [esc(q)])}</span>`
 			);
 			$rf_input.attr("aria-activedescendant", rf_active >= 0 ? `us-rf-${rf_active}` : null);
+			$rf_pop.find(".us-role-pop-foot").prop("hidden", picked.size < 2);
+			$rf_pop.find(".us-seg button").each(function () {
+				$(this).toggleClass("is-on", this.dataset.match === state.role_match);
+			});
 		}
 
-		function pick_role(name) {
-			state.role = name;
-			$rf.toggleClass("active", !!name);
-			$rf.find(".us-role-filter-label").text(name || t("Role"));
-			$rf_btn.attr("title", name ? t("Role: {0}", [name]) : t("Filter by role"));
-			$rf.find(".us-role-filter-clear").prop("hidden", !name);
-			open_role_pop(false);
+		function paint_role_button() {
+			const roles = state.role_filter;
+			$rf.toggleClass("active", !!roles.length);
+			$rf.find(".us-role-filter-label").text(roles.length === 1 ? roles[0] : roles.length ? t("{0} roles", [roles.length]) : t("Role"));
+			$rf_btn.attr("title", roles.length ? roles.join(state.role_match === "all" ? " + " : " / ") : t("Filter by role"));
+			$rf.find(".us-role-filter-clear").prop("hidden", !roles.length);
+		}
+
+		// The list stays open, so several roles can be ticked in a row
+		function set_role_filter(roles) {
+			state.role_filter = roles;
+			paint_role_button();
+			paint_role_options();
 			fetch_users();
-			$search.trigger("focus");
+		}
+
+		function toggle_role(name) {
+			const roles = state.role_filter;
+			if (!name) set_role_filter([]);
+			else set_role_filter(roles.includes(name) ? roles.filter((r) => r !== name) : [...roles, name]);
 		}
 
 		$rf_btn.on("click", () => open_role_pop($rf_pop.prop("hidden")));
-		$rf.find(".us-role-filter-clear").on("click", () => pick_role(""));
+		$rf.find(".us-role-filter-clear").on("click", () => {
+			set_role_filter([]);
+			$search.trigger("focus");
+		});
+		$rf_pop.find(".us-seg").on("click", "button", function () {
+			state.role_match = this.dataset.match;
+			set_role_filter(state.role_filter);
+			$rf_input.trigger("focus");
+		});
 
 		$rf_input.on("input", () => {
 			rf_active = 0;
@@ -728,7 +936,7 @@
 				$rf_list.find(".is-active")[0]?.scrollIntoView({ block: "nearest" });
 			} else if (e.key === "Enter") {
 				e.preventDefault();
-				if (rf_options[rf_active]) pick_role(rf_options[rf_active].name);
+				if (rf_options[rf_active]) toggle_role(rf_options[rf_active].name);
 			} else if (e.key === "Escape" || e.key === "Tab") {
 				if (e.key === "Escape") e.preventDefault();
 				open_role_pop(false);
@@ -738,7 +946,8 @@
 
 		$rf_list.on("mousedown", ".us-combo-option", function (e) {
 			e.preventDefault();
-			pick_role(rf_options[this.dataset.i].name);
+			rf_active = +this.dataset.i;
+			toggle_role(rf_options[this.dataset.i].name);
 		});
 		$rf_list.on("mousemove", ".us-combo-option", function () {
 			if (rf_active === +this.dataset.i) return;
@@ -835,7 +1044,12 @@
 			return frappe
 				.call({
 					method: `${API}.get_context`,
-					args: { txt: state.txt, user_type: state.user_type, role: state.role, cached: JSON.stringify(store.cached_names()) },
+					args: {
+						txt: state.txt,
+						user_type: state.user_type,
+						role: JSON.stringify(state.role_filter),
+						role_match: state.role_match,
+						cached: JSON.stringify(store.cached_names()) },
 					type: "GET",
 				})
 				.then((r) => {
@@ -888,7 +1102,7 @@
 				</div>
 			`);
 			// Administrator's roles can't be edited (the server refuses), so don't offer it
-			$root.find(".us-tile-roles").prop("hidden", me.name === "Administrator");
+			$root.find(".us-tile-roles, .us-tile-perms").prop("hidden", me.name === "Administrator");
 			$root.find(".us-tile-access").attr("title", route_doctype() ? t("Who can open and change {0}", [route_doctype()]) : t("Give a role access to a doctype"));
 			$identity.find(".us-close").on("click", close);
 			$identity.find(".us-head-back").on("click", go_back);
@@ -903,8 +1117,13 @@
 			// Cached entries may be stale; prefer the live row where the server returned one
 			const live = Object.fromEntries(ctx.users.map((u) => [u.name, u]));
 			const fresh = (u) => live[u.name] || u;
-			const matches_type = (u) =>
-				(!state.user_type || u.user_type === state.user_type) && (!state.role || (u.roles || []).includes(state.role));
+			const has_roles = (u) => {
+				const wanted = state.role_filter;
+				const held = u.roles || [];
+				if (!wanted.length) return true;
+				return state.role_match === "all" ? wanted.every((r) => held.includes(r)) : wanted.some((r) => held.includes(r));
+			};
+			const matches_type = (u) => (!state.user_type || u.user_type === state.user_type) && has_roles(u);
 
 			let pinned = [];
 			let most_used = [];
@@ -1035,7 +1254,9 @@
 		$root.find(".us-new").on("click", () => show_create(true));
 
 		function show_create(on) {
+			if (on && state.panel) show_panel(null);
 			if (on && state.access) show_access(false);
+			$create.find(".us-roles-original").prop("hidden", true).empty();
 			state.creating = on;
 			state.editing = null;
 			if (on && state.info) show_info(false);
@@ -1107,6 +1328,31 @@
 				state.original = new Set(r.message || []);
 				state.picked = new Set(state.original);
 				load_roles();
+				frappe
+					.call({ method: `${API}.get_role_snapshot`, args: { user: user.name }, type: "GET" })
+					.then((s) => state.editing === user.name && paint_role_snapshot(s.message));
+			});
+		}
+
+		// Roles changed earlier with the switcher: show what they were, with a one-click undo
+		function paint_role_snapshot(original) {
+			const $box = $create.find(".us-roles-original");
+			const same = !original || (original.length === state.original.size && original.every((r) => state.original.has(r)));
+			$box.prop("hidden", same);
+			if (same) return $box.empty();
+			$box.html(`
+				<span>${t("Changed with User Switcher. Original roles: {0}", [`<b>${esc(original.join(", ") || t("none"))}</b>`])}</span>
+				<button type="button" class="us-btn us-roles-restore">${t("Restore original")}</button>
+			`);
+			$box.find(".us-roles-restore").on("click", function () {
+				this.disabled = true;
+				frappe
+					.call({ method: `${API}.restore_user_roles`, args: { user: state.editing }, type: "POST" })
+					.then(() => {
+						frappe.show_alert?.({ message: t("Original roles restored"), indicator: "green" });
+						window.location.reload();
+					})
+					.catch(() => (this.disabled = false));
 			});
 		}
 
@@ -1238,6 +1484,7 @@
 					const u = { ...r.message, name: r.message.name };
 					store.remember(u);
 					if (and_switch) {
+						mark_switched(true);
 						window.location.pathname.startsWith("/app")
 							? (window.location.href = "/app")
 							: window.location.reload();
@@ -1274,6 +1521,7 @@
 		let dt_timer;
 
 		function show_access(on, doctype) {
+			if (on && state.panel) show_panel(null);
 			if (on && state.info) show_info(false);
 			if (on && state.creating) show_create(false);
 			state.access = on ? { data: null, extra: [], edits: {} } : null;
@@ -1455,7 +1703,10 @@
 			const cannot = shown_rights.filter((right) => !can.includes(right));
 			const pills = (rights, cls) => rights.map((r) => `<span class="us-access-pill ${cls}">${RIGHT_LABELS[r]}</span>`).join("");
 			$summary.html(`
-				<div class="us-access-summary-title">${t("What {0} can do", [`<b>${esc(display_name(me))}</b>`])}</div>
+				<div class="us-access-summary-title">
+					<span>${t("What {0} can do", [`<b>${esc(display_name(me))}</b>`])}</span>
+					<button type="button" class="us-link us-access-why">${ICONS.help}${t("Why? Check a document")}</button>
+				</div>
 				<div class="us-access-summary-row">
 					<span class="us-access-summary-label">${t("Allowed")}</span>
 					<span class="us-access-pills">${can.length ? pills(can, "is-yes") : `<span class="us-access-none">${t("Nothing yet")}</span>`}</span>
@@ -1539,6 +1790,14 @@
 			else $access_roles.find(".us-right").first().trigger("focus");
 		});
 		$access_more.on("change", paint_access);
+		$access.on("click", ".us-access-why", () => {
+			if (has_access_edits()) {
+				frappe.show_alert?.({ message: t("Save or cancel your changes first"), indicator: "orange" });
+				return;
+			}
+			const doctype = state.access.data.doctype;
+			show_panel("why", { doctype, docname: route_docname(doctype) });
+		});
 
 		// Role Permission Manager is for System Managers only. While switched into someone without that
 		// role the page would say Not permitted, so go back to your own account first and open it there.
@@ -1569,11 +1828,398 @@
 				.catch(() => $buttons.prop("disabled", false));
 		});
 
+		// ---------- panels: Why · User permissions · Clean up ----------
+
+		const $panel = $root.find(".us-panel");
+		const $panel_body = $panel.find(".us-panel-body");
+		const $panel_actions = $panel.find(".us-panel-actions");
+		const viewed = () => state.ctx?.current_user || boot_user_info(current_user());
+		const PANELS = { why: paint_why, perms: paint_perms, cleanup: paint_cleanup };
+
+		function show_panel(kind, opts = {}) {
+			if (kind && state.info) show_info(false);
+			if (kind && state.creating) show_create(false);
+			if (kind && state.access) show_access(false);
+			state.panel = kind || null;
+			$root.toggleClass("us-panel-mode", !!kind);
+			if (!kind) {
+				$search.trigger("focus");
+				return;
+			}
+			$panel.attr("data-panel", kind).scrollTop(0);
+			$panel_body.empty();
+			$panel_actions.empty();
+			PANELS[kind](opts);
+		}
+
+		function panel_head(title, sub) {
+			$panel.find(".us-create-title").text(title);
+			$panel.find(".us-create-sub").text(sub || "");
+		}
+
+		const combo_field = (cls, label, placeholder) => `
+			<label class="us-field"><span>${label}</span>
+				<span class="us-combo">
+					<input class="${cls}" type="text" placeholder="${placeholder}" ${NO_AUTOFILL}>
+					<span class="us-combo-list" role="listbox" hidden></span>
+				</span>
+			</label>`;
+		const find_doctypes = (q) =>
+			frappe.call({ method: `${API}.search_doctypes`, args: { txt: q }, type: "GET" }).then((r) => r.message || []);
+		const doctype_label = (d, q) =>
+			`<span class="us-combo-name">${mark_match(d.name, q)}</span><span class="us-combo-meta">${esc(d.module || "")}</span>`;
+		const find_values = (doctype, q) =>
+			doctype
+				? frappe.call({ method: `${API}.search_link_values`, args: { doctype, txt: q }, type: "GET" }).then((r) => r.message || [])
+				: Promise.resolve([]);
+		const value_label = (v, q) =>
+			`<span class="us-combo-name">${mark_match(v.value, q)}</span><span class="us-combo-meta">${esc(v.label || "")}</span>`;
+
+		// ----- Why can't they open it? -----
+
+		const WHY_RIGHTS = ["read", "write", "create", "submit", "delete"];
+
+		function paint_why({ doctype = "", docname = "", ptype = "read" } = {}) {
+			const me = viewed();
+			const why = { doctype, docname, ptype };
+			panel_head(t("Why can't they open it?"), t("Check what {0} can do with a doctype or one document, and why.", [display_name(me)]));
+			$panel_body.html(`
+				<div class="us-create-grid">
+					${combo_field("us-why-doctype", t("DocType"), t("e.g. Sales Invoice"))}
+					${combo_field("us-why-docname", t("Document (optional)"), t("Any document"))}
+				</div>
+				<span class="us-seg us-why-rights" role="group" aria-label="${t("Permission")}">
+					${WHY_RIGHTS.map((r) => `<button type="button" data-right="${r}">${RIGHT_LABELS[r]}</button>`).join("")}
+				</span>
+				<div class="us-why-result"></div>
+			`);
+			const $doctype = $panel_body.find(".us-why-doctype").val(doctype);
+			const $docname = $panel_body.find(".us-why-docname").val(docname);
+			const $result = $panel_body.find(".us-why-result");
+
+			combo($doctype, $doctype.next(), {
+				fetch: find_doctypes,
+				label: doctype_label,
+				pick(d) {
+					$doctype.val(d.name);
+					$docname.val("");
+					Object.assign(why, { doctype: d.name, docname: "" });
+					run();
+					$docname.trigger("focus");
+				},
+			});
+			combo($docname, $docname.next(), {
+				fetch: (q) => find_values(why.doctype, q),
+				label: value_label,
+				pick(v) {
+					$docname.val(v.value);
+					why.docname = v.value;
+					run();
+				},
+			});
+			// Clearing the document goes back to checking the doctype as a whole
+			$docname.on("input", () => {
+				if (!$docname.val().trim() && why.docname) {
+					why.docname = "";
+					run();
+				}
+			});
+			$panel_body.find(".us-why-rights").on("click", "button", function () {
+				why.ptype = this.dataset.right;
+				run();
+			});
+
+			function run() {
+				$panel_body.find(".us-why-rights button").each(function () {
+					$(this).toggleClass("is-on", this.dataset.right === why.ptype);
+				});
+				if (!why.doctype) return $result.html(empty_state(t("Pick a doctype to check.")));
+				$result.html(empty_state(t("Checking...")));
+				frappe
+					.call({ method: `${API}.explain_access`, args: why, type: "GET" })
+					.then((r) => state.panel === "why" && paint_why_result($result, r.message))
+					.catch(() => $result.html(empty_state(t("Could not check this."))));
+			}
+			run();
+			if (!doctype) setTimeout(() => $doctype.trigger("focus"), 30);
+		}
+
+		function paint_why_result($result, x) {
+			const name = esc(display_name(viewed()));
+			const right = `<b>${RIGHT_LABELS[x.ptype]}</b>`;
+			const target = `<b>${esc(x.docname ? `${x.doctype} ${x.docname}` : x.doctype)}</b>`;
+			const step = (kind, title, text, action = "") => `
+				<div class="us-why-step is-${kind}">
+					<span class="us-why-icon">${kind === "ok" ? ICONS.check : kind === "bad" ? ICONS.close : ICONS.info}</span>
+					<div class="us-why-text"><b>${title}</b><p>${text}</p>${action}</div>
+				</div>`;
+			const button = (action, label) => `<button type="button" class="us-btn us-why-action" data-action="${action}">${label}</button>`;
+			const limits = x.restrictions.map((r) => `${esc(r.allow)}: ${esc(r.values.join(", "))}`).join(" · ");
+
+			const steps = [];
+			if (x.role_ok) {
+				steps.push(step("ok", t("A role allows it"), t("One of their roles gives {0} on {1}.", [right, `<b>${esc(x.doctype)}</b>`])));
+			} else if (x.owner_only) {
+				steps.push(step("info", t("Only their own documents"), t("Their roles give {0} only on documents they created.", [right]), button("access", t("Fix access"))));
+			} else {
+				steps.push(step("bad", t("No role allows it"), t("None of their roles gives {0} on {1}.", [right, `<b>${esc(x.doctype)}</b>`]), button("access", t("Fix access"))));
+			}
+			if (x.docname && !x.user_permission_ok) {
+				steps.push(step("bad", t("User Permissions block this document"), t("They are limited to: {0}", [limits]), button("perms", t("User permissions"))));
+			} else if (x.docname) {
+				steps.push(step("ok", t("User Permissions allow this document"), limits ? t("Their limits: {0}", [limits]) : t("They have no User Permissions.")));
+			} else if (limits) {
+				steps.push(step("info", t("Limited by User Permissions"), t("Lists and reports only show records within: {0}", [limits]), button("perms", t("User permissions"))));
+			}
+			if (x.allowed && !x.role_ok && !x.owner_only) {
+				steps.push(step("ok", t("Shared with them"), t("The document is shared with them, so the role rules don't matter.")));
+			}
+
+			$result.html(`
+				<div class="us-why-verdict ${x.allowed ? "is-ok" : "is-bad"}">
+					${x.allowed ? ICONS.check : ICONS.close}
+					<span>${x.allowed ? t("{0} can {1} {2}", [name, right, target]) : t("{0} can't {1} {2}", [name, right, target])}</span>
+				</div>
+				${steps.join("")}
+				${x.log.length ? `<details class="us-why-log"><summary>${t("Frappe's permission log ({0} steps)", [x.log.length])}</summary>
+					<ol>${x.log.map((l) => `<li>${esc(l)}</li>`).join("")}</ol></details>` : ""}
+			`);
+			$result.find(".us-why-action").on("click", function () {
+				if (this.dataset.action === "access") show_access(true, x.doctype);
+				else show_panel("perms");
+			});
+		}
+
+		// ----- User permissions: limit the viewed user to some records -----
+
+		function paint_perms() {
+			const me = viewed();
+			const add = { allow: "" };
+			let changed = false;
+			panel_head(t("User permissions"), t("Limit {0} to some records, e.g. one Company. Changes save right away.", [display_name(me)]));
+			$panel_body.html(`
+				<div class="us-perm-add">
+					${combo_field("us-perm-allow", t("Limit to a"), t("DocType, e.g. Company"))}
+					${combo_field("us-perm-value", t("Value"), t("Pick a doctype first"))}
+					<button type="button" class="us-btn us-btn--primary us-perm-save" disabled>${t("Add")}</button>
+				</div>
+				<label class="us-perm-default"><input type="checkbox"> ${t("Also use it as their default value")}</label>
+				<div class="us-perm-list">${empty_state(t("Loading..."))}</div>
+			`);
+			$panel_actions.html(`
+				<span class="us-form-status">${t("Rules apply to every doctype that links to the chosen one.")}</span>
+				<button type="button" class="us-btn us-btn--primary us-perm-reload" hidden>${t("Reload to apply")}</button>
+			`);
+			const $allow = $panel_body.find(".us-perm-allow");
+			const $value = $panel_body.find(".us-perm-value").prop("disabled", true);
+			const $save = $panel_body.find(".us-perm-save");
+			const $list = $panel_body.find(".us-perm-list");
+			const can_save = () => $save.prop("disabled", !add.allow || !$value.val().trim());
+
+			combo($allow, $allow.next(), {
+				fetch: find_doctypes,
+				label: doctype_label,
+				pick(d) {
+					add.allow = d.name;
+					$allow.val(d.name);
+					$value.prop("disabled", false).attr("placeholder", t("Search {0}", [d.name])).val("").trigger("focus");
+					can_save();
+				},
+			});
+			$allow.on("input", () => {
+				add.allow = "";
+				$value.prop("disabled", true).val("");
+				can_save();
+			});
+			combo($value, $value.next(), {
+				fetch: (q) => find_values(add.allow, q),
+				label: value_label,
+				pick(v) {
+					$value.val(v.value);
+					can_save();
+					$save.trigger("focus");
+				},
+			});
+			$value.on("input", can_save);
+			$value.on("keydown", (e) => e.key === "Enter" && !e.combo_picked && !$save.prop("disabled") && $save.trigger("click"));
+
+			$save.on("click", () => {
+				$save.prop("disabled", true);
+				frappe
+					.call({
+						method: `${API}.add_user_permission`,
+						args: {
+							user: me.name,
+							allow: add.allow,
+							for_value: $value.val().trim(),
+							is_default: $panel_body.find(".us-perm-default input").prop("checked") ? 1 : 0,
+						},
+						type: "POST",
+					})
+					.then((r) => {
+						$value.val("").trigger("focus");
+						paint_list(r.message, true);
+					})
+					.catch(can_save);
+			});
+
+			$list.on("click", ".us-perm-remove", function () {
+				this.disabled = true;
+				frappe
+					.call({ method: `${API}.remove_user_permission`, args: { name: this.dataset.name }, type: "POST" })
+					.then((r) => paint_list(r.message, true))
+					.catch(() => (this.disabled = false));
+			});
+			$panel_actions.find(".us-perm-reload").on("click", () => window.location.reload());
+
+			function paint_list(rows, now_changed) {
+				changed = changed || !!now_changed;
+				$panel_actions.find(".us-perm-reload").prop("hidden", !changed);
+				if (!rows.length) {
+					$list.html(empty_state(t("No limits yet. {0} sees every record their roles allow.", [esc(display_name(me))])));
+					return;
+				}
+				const groups = {};
+				rows.forEach((r) => (groups[r.allow] ||= []).push(r));
+				$list.html(
+					Object.entries(groups)
+						.map(([allow, list]) => `<div class="us-group">${t("Only these {0}", [esc(allow)])}</div>` +
+							list.map((r) => `<div class="us-perm-row">
+								<span class="us-perm-value-text">${esc(r.for_value)}</span>
+								${r.is_default ? `<span class="us-chip">${t("Default")}</span>` : ""}
+								${r.apply_to_all_doctypes ? "" : `<span class="us-chip">${t("Only on {0}", [esc(r.applicable_for || "")])}</span>`}
+								<button type="button" class="us-icon-btn us-perm-remove" data-name="${esc(r.name)}"
+									title="${t("Remove")}" aria-label="${t("Remove {0}", [esc(r.for_value)])}">${ICONS.close}</button>
+							</div>`).join(""))
+						.join("")
+				);
+			}
+
+			frappe
+				.call({ method: `${API}.get_user_permission_list`, args: { user: me.name }, type: "GET" })
+				.then((r) => state.panel === "perms" && paint_list(r.message || []));
+			setTimeout(() => $allow.trigger("focus"), 30);
+		}
+
+		// ----- Clean up: test users and role changes -----
+
+		function paint_cleanup() {
+			const picked = new Set();
+			panel_head(t("Clean up"), t("Remove test users and undo role changes made with User Switcher."));
+			$panel_body.html(empty_state(t("Loading...")));
+			$panel_actions.html(`
+				<span class="us-form-status us-clean-status"></span>
+				<button type="button" class="us-btn us-clean-disable" disabled>${t("Disable")}</button>
+				<button type="button" class="us-btn us-btn--danger us-clean-delete" disabled>${t("Delete")}</button>
+			`);
+			const paint_picked = () => {
+				$panel_actions.find(".us-clean-status").text(picked.size ? t("{0} selected", [picked.size]) : t("Tick test users to remove them"));
+				$panel_actions.find(".us-clean-disable, .us-clean-delete").prop("disabled", !picked.size);
+			};
+
+			function paint(data) {
+				picked.clear();
+				const user_text = (u) => `<span class="us-item-text">
+					<span class="us-item-name"><span class="us-item-name-text">${esc(display_name(u))}</span>
+						${u.enabled === 0 ? `<span class="us-chip">${t("Disabled")}</span>` : ""}</span>
+					<span class="us-item-email">${esc(u.name)}</span>
+				</span>`;
+				const tests = data.test_users.map((u) => `<label class="us-clean-row">
+					<input type="checkbox" value="${esc(u.name)}">
+					${avatar(u)}
+					${user_text(u)}
+					<span class="us-clean-meta" title="${esc((u.roles || []).join(", "))}">${t("{0} roles", [(u.roles || []).length])} · ${when(u.creation)}</span>
+				</label>`);
+				const changed = data.changed_roles.map((u) => {
+					const added = u.current.filter((r) => !u.original.includes(r));
+					const removed = u.original.filter((r) => !u.current.includes(r));
+					return `<div class="us-clean-row">
+						${avatar(u)}
+						<span class="us-item-text">
+							<span class="us-item-name"><span class="us-item-name-text">${esc(display_name(u))}</span></span>
+							<span class="us-item-email">
+								${added.length ? `<span class="us-status-add">+ ${esc(added.join(", "))}</span>` : ""}
+								${removed.length ? `<span class="us-status-remove">− ${esc(removed.join(", "))}</span>` : ""}
+							</span>
+						</span>
+						<button type="button" class="us-btn us-clean-restore" data-user="${esc(u.name)}">${t("Restore")}</button>
+					</div>`;
+				});
+				$panel_body.html(`
+					${tests.length
+						? `<label class="us-group us-clean-all"><input type="checkbox"> ${t("Test users ({0})", [tests.length])}</label>${tests.join("")}`
+						: `<div class="us-group">${t("Test users")}</div>${empty_state(t("No test users. Make one with New test user."))}`}
+					<div class="us-group">${t("Roles changed with User Switcher ({0})", [changed.length])}</div>
+					${changed.length ? changed.join("") : empty_state(t("No role changes to undo."))}
+				`);
+				$panel_body.find(".us-clean-row input").on("change", function () {
+					this.checked ? picked.add(this.value) : picked.delete(this.value);
+					$panel_body.find(".us-clean-all input").prop("checked", picked.size === tests.length);
+					paint_picked();
+				});
+				$panel_body.find(".us-clean-all input").on("change", function () {
+					$panel_body.find(".us-clean-row input").prop("checked", this.checked).trigger("change");
+				});
+				$panel_body.find(".us-clean-restore").on("click", function () {
+					const user = this.dataset.user;
+					this.disabled = true;
+					frappe
+						.call({ method: `${API}.restore_user_roles`, args: { user }, type: "POST" })
+						.then(() => {
+							frappe.show_alert?.({ message: t("Original roles restored"), indicator: "green" });
+							// Desk caches the signed-in user's roles in boot info
+							if (user === current_user()) window.location.reload();
+							else load();
+						})
+						.catch(() => (this.disabled = false));
+				});
+				paint_picked();
+			}
+
+			function remove(action) {
+				const users = [...picked];
+				const go = () => {
+					$panel_actions.find(".us-btn").prop("disabled", true);
+					frappe
+						.call({ method: `${API}.remove_test_users`, args: { users, action }, type: "POST" })
+						.then((r) => {
+							const out = r.message;
+							store.forget(out.deleted);
+							frappe.show_alert?.({
+								message: [
+									out.deleted.length && t("Deleted {0}", [out.deleted.length]),
+									out.disabled.length && t("Disabled {0}", [out.disabled.length]),
+									out.skipped.length && t("Skipped {0}", [out.skipped.length]),
+								].filter(Boolean).join(" · "),
+								indicator: "green",
+							});
+							load();
+							fetch_users();
+						})
+						.catch(paint_picked);
+				};
+				if (action === "disable") return go();
+				ask(t("Delete {0} test users? Users still linked from other records are disabled instead.", [users.length]), go);
+			}
+
+			$panel_actions.find(".us-clean-disable").on("click", () => remove("disable"));
+			$panel_actions.find(".us-clean-delete").on("click", () => remove("delete"));
+
+			function load() {
+				frappe.call({ method: `${API}.get_cleanup`, type: "GET" }).then((r) => state.panel === "cleanup" && paint(r.message));
+			}
+			load();
+		}
+
 		return {
 			open,
 			open_access(doctype) {
 				open();
 				show_access(true, doctype);
+			},
+			open_why(doctype, docname) {
+				open();
+				show_panel("why", { doctype, docname });
 			},
 		};
 	}
@@ -1587,19 +2233,28 @@
 		return DOCTYPE_VIEWS.includes(route[0]) && route[1] ? route[1] : "";
 	}
 
+	// The document open in the form, when it is a saved one of `doctype`
+	function route_docname(doctype) {
+		const route = frappe.get_route?.() || [];
+		const name = route[0] === "Form" && route[1] === doctype ? String(route[2] || "") : "";
+		return name.startsWith("new-") ? "" : name;
+	}
+
 	// ---------- "Not permitted" while switched: offer to fix it ----------
 
 	function watch_permission_errors() {
 		let last_shown = 0;
-		const offer_fix = (doctype) => {
+		const offer_fix = (doctype, docname) => {
 			doctype = doctype || route_doctype();
 			if (!doctype || Date.now() - last_shown < 3000) return;
+			docname = docname || route_docname(doctype);
 			last_shown = Date.now();
 			const me = boot_user_info(current_user());
 			frappe.show_alert?.(
 				{
 					message: `${t("{0} has no access to {1}.", [esc(display_name(me)), `<b>${esc(doctype)}</b>`])}
-						<a href="#" class="us-fix-access" data-doctype="${esc(doctype)}">${t("Fix access")}</a>`,
+						<a href="#" class="us-fix-access" data-doctype="${esc(doctype)}">${t("Fix access")}</a> ·
+						<a href="#" class="us-why-access" data-doctype="${esc(doctype)}" data-docname="${esc(docname)}">${t("Why?")}</a>`,
 					indicator: "orange",
 				},
 				10
@@ -1610,6 +2265,10 @@
 			e.preventDefault();
 			frappe.user_switcher.open_access?.(this.dataset.doctype);
 		});
+		$(document).on("click", ".us-why-access", function (e) {
+			e.preventDefault();
+			frappe.user_switcher.open_why?.(this.dataset.doctype, this.dataset.docname);
+		});
 
 		$(document).ajaxComplete((e, xhr, settings) => {
 			if (xhr.responseJSON?.exc_type !== "PermissionError" || String(settings.url).includes("user_switcher.api")) return;
@@ -1617,7 +2276,7 @@
 			try {
 				data = typeof data === "string" ? Object.fromEntries(new URLSearchParams(data)) : data;
 			} catch (err) {}
-			offer_fix(data?.doctype);
+			offer_fix(data?.doctype, data?.doctype && data?.name);
 		});
 
 		// Desk shows its own Not Permitted page without a server error when the doctype isn't readable
@@ -1669,6 +2328,7 @@
 			const widget = render_widget();
 			frappe.user_switcher.open = widget.open;
 			frappe.user_switcher.open_access = widget.open_access;
+			frappe.user_switcher.open_why = widget.open_why;
 			if (who.is_switched) watch_permission_errors();
 		});
 	});
