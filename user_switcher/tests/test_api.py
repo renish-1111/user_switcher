@@ -16,20 +16,28 @@ class TestUserSwitcherAccess(IntegrationTestCase):
 			self.assertFalse(api._can_switch("Administrator"))
 
 	def test_guest_never_allowed(self):
-		with patch.object(frappe.local, "conf", frappe._dict(developer_mode=1, user_switcher_enabled=1)):
+		with patch.object(
+			frappe.local, "conf", frappe._dict(frappe.local.conf, developer_mode=1, user_switcher_enabled=1)
+		):
 			self.assertFalse(api._can_switch("Guest"))
 			self.assertTrue(api._can_switch("Administrator"))
 
 	def test_logged_out_probe_is_quietly_refused(self):
 		frappe.set_user("Guest")
 		try:
-			with patch.object(frappe.local, "conf", frappe._dict(developer_mode=1, user_switcher_enabled=1)):
+			with patch.object(
+				frappe.local,
+				"conf",
+				frappe._dict(frappe.local.conf, developer_mode=1, user_switcher_enabled=1),
+			):
 				self.assertEqual(api.get_context(txt="a"), {"allowed": False})
 		finally:
 			frappe.set_user("Administrator")
 
 	def test_system_manager_cannot_list_administrator(self):
-		with patch.object(frappe.local, "conf", frappe._dict(developer_mode=1, user_switcher_enabled=1)):
+		with patch.object(
+			frappe.local, "conf", frappe._dict(frappe.local.conf, developer_mode=1, user_switcher_enabled=1)
+		):
 			names = [u.name for u in api._find_users("test@example.com", None, None, 100)]
 		self.assertNotIn("Administrator", names)
 
@@ -93,7 +101,7 @@ class TestManageRoles(IntegrationTestCase):
 	def setUp(self):
 		frappe.set_user("Administrator")
 		self.conf = patch.object(
-			frappe.local, "conf", frappe._dict(developer_mode=1, user_switcher_enabled=1)
+			frappe.local, "conf", frappe._dict(frappe.local.conf, developer_mode=1, user_switcher_enabled=1)
 		)
 		self.conf.start()
 		self.addCleanup(self.conf.stop)
@@ -188,7 +196,7 @@ class TestTesterTools(IntegrationTestCase):
 	def setUp(self):
 		frappe.set_user("Administrator")
 		self.conf = patch.object(
-			frappe.local, "conf", frappe._dict(developer_mode=1, user_switcher_enabled=1)
+			frappe.local, "conf", frappe._dict(frappe.local.conf, developer_mode=1, user_switcher_enabled=1)
 		)
 		self.conf.start()
 		self.addCleanup(self.conf.stop)
@@ -254,7 +262,7 @@ class TestSwitchHardening(IntegrationTestCase):
 	def setUp(self):
 		frappe.set_user("Administrator")
 		self.conf = patch.object(
-			frappe.local, "conf", frappe._dict(developer_mode=1, user_switcher_enabled=1)
+			frappe.local, "conf", frappe._dict(frappe.local.conf, developer_mode=1, user_switcher_enabled=1)
 		)
 		self.conf.start()
 		self.addCleanup(self.conf.stop)
@@ -354,7 +362,9 @@ class TestAccessGates(IntegrationTestCase):
 
 	def test_disabled_system_manager_cannot_switch(self):
 		user = self._manager("us_gate_sm@example.com")
-		with patch.object(frappe.local, "conf", frappe._dict(developer_mode=1, user_switcher_enabled=1)):
+		with patch.object(
+			frappe.local, "conf", frappe._dict(frappe.local.conf, developer_mode=1, user_switcher_enabled=1)
+		):
 			self.assertTrue(api._can_switch(user))
 			frappe.db.set_value("User", user, "enabled", 0)
 			frappe.clear_cache(user=user)
@@ -366,7 +376,11 @@ class TestAccessGates(IntegrationTestCase):
 		frappe.clear_cache(user=user)
 		self._impersonated_by(user)
 		with (
-			patch.object(frappe.local, "conf", frappe._dict(developer_mode=1, user_switcher_enabled=1)),
+			patch.object(
+				frappe.local,
+				"conf",
+				frappe._dict(frappe.local.conf, developer_mode=1, user_switcher_enabled=1),
+			),
 			patch.object(api, "delete_session") as delete,
 			# the hook commits so the delete survives the error rollback; never let a test do that for real
 			patch.object(frappe.db, "commit") as commit,
@@ -378,7 +392,11 @@ class TestAccessGates(IntegrationTestCase):
 	def test_valid_impersonated_session_is_kept(self):
 		self._impersonated_by("Administrator")
 		with (
-			patch.object(frappe.local, "conf", frappe._dict(developer_mode=1, user_switcher_enabled=1)),
+			patch.object(
+				frappe.local,
+				"conf",
+				frappe._dict(frappe.local.conf, developer_mode=1, user_switcher_enabled=1),
+			),
 			patch.object(api, "delete_session") as delete,
 		):
 			api.end_orphaned_session()
