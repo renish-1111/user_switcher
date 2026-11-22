@@ -526,7 +526,7 @@
 				<span>${kbd("↑")}${kbd("↓")}${kbd("↵")} ${t("move and pick")}</span>
 				<span>${kbd("Esc")} ${t("close")}</span>
 			</div>
-			${item("info", t("Good to know"), t("It works only when developer mode and user_switcher_enabled are both on. Every switch is saved in the User Switch Log. Do not use it on a live site."))}
+			${item("info", t("Good to know"), t("It works when user_switcher_enabled is on in site config. Every switch is saved in the User Switch Log. Use carefully on a live site."))}
 		`;
 	}
 

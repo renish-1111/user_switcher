@@ -8,7 +8,7 @@ from frappe import _
 from frappe.sessions import delete_session, get_expiry_in_seconds
 from frappe.utils import cint, validate_email_address
 
-ALLOWED_ROLES = {"System Manager"}
+ALLOWED_ROLES = set()  # Administrator only (_can_switch allows Administrator explicitly)
 AUTOMATIC_ROLES = ["All", "Guest", "Administrator", "Desk User"]
 # Desk route views whose second part is a doctype (frappe.get_route())
 DOCTYPE_VIEWS = ("List", "Form", "Report", "Tree", "Image", "Kanban", "Calendar", "Gantt", "Dashboard", "Map")
@@ -50,8 +50,8 @@ def _real_user() -> str:
 
 
 def _is_enabled() -> bool:
-	# ? NEEDS BOTH SETTINGS: developer_mode ALONE IS OFTEN ON BY HABIT (OR BY MISTAKE ON A LIVE SITE)
-	return bool(frappe.conf.developer_mode and frappe.conf.get("user_switcher_enabled"))
+	# Opt-in only via site config. developer_mode is not required.
+	return bool(frappe.conf.get("user_switcher_enabled"))
 
 
 def _escape_like(txt: str) -> str:
